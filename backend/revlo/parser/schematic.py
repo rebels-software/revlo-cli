@@ -10,13 +10,12 @@ from pathlib import Path
 
 import kicad_sch_api as ksa
 
+from revlo.parser.connectivity import build_net_list
 from revlo.parser.models import (
     ParsedComponent,
-    ParsedNet,
     ParsedPin,
     ParsedSchematic,
     ParsedSheet,
-    PinConnection,
     TitleBlockInfo,
 )
 
@@ -44,7 +43,7 @@ def parse_schematic(path: str) -> ParsedSchematic:
 
     title_block = _extract_title_block(sch)
     components, power_symbols = _extract_components(sch)
-    nets, unconnected_pins = _extract_nets(sch, components + power_symbols)
+    nets, unconnected_pins = build_net_list(sch, components + power_symbols)
     sheets = _extract_sheets(sch)
 
     return ParsedSchematic(
@@ -136,84 +135,6 @@ def _extract_pins(sch: ksa.Schematic, comp: ksa.Component) -> list[ParsedPin]:
         )
 
     return parsed_pins
-
-
-def _extract_nets(
-    sch: ksa.Schematic,
-    all_components: list[ParsedComponent],
-) -> tuple[list[ParsedNet], list[PinConnection]]:
-    """Build the net list and identify unconnected pins.
-
-    Iterates every pin of every component and queries the schematic for its
-    net.  Nets are deduplicated by name.  Pins with no net are collected into
-    the unconnected list.
-
-    Returns:
-        A tuple of (nets, unconnected_pins).
-    """
-    # Build a label-text lookup keyed by UUID for resolving net label names.
-    label_text_by_uuid: dict[str, str] = {}
-    for label in sch.labels:
-        label_text_by_uuid[label.uuid] = label.text
-
-    nets_by_name: dict[str, ParsedNet] = {}
-    unconnected_pins: list[PinConnection] = []
-
-    for comp in all_components:
-        for pin in comp.pins:
-            try:
-                net = sch.get_net_for_pin(comp.reference, pin.number)
-            except Exception:
-                net = None
-
-            if net is None:
-                unconnected_pins.append(
-                    PinConnection(
-                        component_ref=comp.reference,
-                        pin_number=pin.number,
-                        pin_name=pin.name,
-                    )
-                )
-                continue
-
-            net_name = net.name or ""
-
-            if net_name not in nets_by_name:
-                # Resolve label texts from UUIDs
-                label_texts: list[str] = []
-                for label_uuid in net.labels:
-                    text = label_text_by_uuid.get(label_uuid)
-                    if text:
-                        label_texts.append(text)
-
-                # A net is a power net if any connected component is a power
-                # symbol (reference starts with #PWR).
-                is_power = any(
-                    pc.reference.startswith("#PWR") for pc in net.pins
-                )
-
-                nets_by_name[net_name] = ParsedNet(
-                    name=net_name,
-                    pins=[],
-                    labels=label_texts,
-                    is_power=is_power,
-                )
-
-            # Add this pin connection to the net (avoid duplicates).
-            pin_conn = PinConnection(
-                component_ref=comp.reference,
-                pin_number=pin.number,
-                pin_name=pin.name,
-            )
-            existing = nets_by_name[net_name].pins
-            if not any(
-                p.component_ref == pin_conn.component_ref
-                and p.pin_number == pin_conn.pin_number
-                for p in existing
-            ):
-                existing.append(pin_conn)
-
-    return list(nets_by_name.values()), unconnected_pins
 
 
 def _extract_sheets(sch: ksa.Schematic) -> list[ParsedSheet]:
