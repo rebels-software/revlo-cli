@@ -158,6 +158,7 @@ def test_package_exports():
         "NormalizedPartNumber",
         "PinFunction",
         "download_pdf",
+        "enrich_schematic",
         "extract_spec",
         "extract_text",
         "normalize_part",
