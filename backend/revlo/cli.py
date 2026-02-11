@@ -7,10 +7,13 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
 from revlo.reviewer import MODEL_OPUS, MODEL_SONNET, review_schematic
+
+logger = logging.getLogger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -46,6 +49,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Claude model to use for review (default: sonnet via env/fallback)",
     )
+    review.add_argument(
+        "--skip-datasheet",
+        action="store_true",
+        dest="skip_datasheet",
+        help="Skip datasheet enrichment and run basic review only",
+    )
 
     return parser
 
@@ -74,13 +83,26 @@ def _run_review(args: argparse.Namespace) -> None:
         print(f"Error: failed to parse schematic: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # Datasheet enrichment (unless --skip-datasheet)
+    datasheet_specs = None
+    if not args.skip_datasheet:
+        try:
+            from revlo.datasheet.pipeline import enrich_schematic
+
+            cache_dir = Path(path).parent / "datasheets"
+            datasheet_specs = asyncio.run(enrich_schematic(parsed, cache_dir))
+        except Exception as exc:
+            logger.warning("Datasheet enrichment failed, continuing without specs: %s", exc)
+
     # Resolve model choice
     _model_map = {"sonnet": MODEL_SONNET, "opus": MODEL_OPUS}
     model: str | None = _model_map[args.model] if args.model else None
 
     # Run review
     try:
-        report = asyncio.run(review_schematic(parsed, model=model))
+        report = asyncio.run(
+            review_schematic(parsed, model=model, datasheet_specs=datasheet_specs)
+        )
     except Exception as exc:
         print(f"Error: review failed: {exc}", file=sys.stderr)
         sys.exit(1)

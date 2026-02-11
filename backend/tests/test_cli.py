@@ -144,7 +144,7 @@ def test_run_review_success_markdown(
     with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
         mock_asyncio_run.return_value = mock_review_report
 
-        args = _build_parser().parse_args(["review", fixture_path])
+        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet"])
         _run_review(args)
 
     mock_parse.assert_called_once_with(fixture_path)
@@ -173,7 +173,7 @@ def test_run_review_success_json(
     with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
         mock_asyncio_run.return_value = mock_review_report
 
-        args = _build_parser().parse_args(["review", fixture_path, "--json"])
+        args = _build_parser().parse_args(["review", fixture_path, "--json", "--skip-datasheet"])
         _run_review(args)
 
     mock_parse.assert_called_once_with(fixture_path)
@@ -210,7 +210,7 @@ def test_run_review_success_output_file(
         mock_asyncio_run.return_value = mock_review_report
 
         args = _build_parser().parse_args(
-            ["review", fixture_path, "--output", str(output_file)]
+            ["review", fixture_path, "--output", str(output_file), "--skip-datasheet"]
         )
         _run_review(args)
 
@@ -248,7 +248,7 @@ def test_run_review_success_json_to_file(
         mock_asyncio_run.return_value = mock_review_report
 
         args = _build_parser().parse_args(
-            ["review", fixture_path, "--output", str(output_file), "--json"]
+            ["review", fixture_path, "--output", str(output_file), "--json", "--skip-datasheet"]
         )
         _run_review(args)
 

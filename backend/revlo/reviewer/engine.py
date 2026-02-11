@@ -10,6 +10,7 @@ from typing import Any
 
 import anthropic
 
+from revlo.datasheet.models import DatasheetSpec
 from revlo.parser.models import ParsedSchematic
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.reviewer.models import Finding, ReviewReport
@@ -126,6 +127,7 @@ def _build_summary(findings: list[Finding]) -> str:
 async def review_schematic(
     schematic: ParsedSchematic,
     model: str | None = None,
+    datasheet_specs: dict[str, DatasheetSpec] | None = None,
 ) -> ReviewReport:
     """Review a parsed schematic by sending chunks to Claude concurrently.
 
@@ -139,6 +141,9 @@ async def review_schematic(
         model: Claude model ID to use. If *None*, reads from the
             ``REVLO_MODEL`` environment variable, defaulting to
             :data:`DEFAULT_MODEL` (Sonnet).
+        datasheet_specs: Optional mapping of component reference to
+            :class:`DatasheetSpec`. When provided, matching specs are
+            injected into each chunk before prompt generation.
 
     Malformed responses are logged and skipped -- this function never raises
     due to bad LLM output.
@@ -146,6 +151,15 @@ async def review_schematic(
     resolved_model = model or os.environ.get("REVLO_MODEL", DEFAULT_MODEL)
 
     chunks = chunk_schematic(schematic)
+
+    # Inject datasheet specs into chunks when available.
+    if datasheet_specs:
+        for chunk in chunks:
+            chunk.datasheet_specs = {
+                ref: datasheet_specs[ref]
+                for ref in [c.reference for c in chunk.components]
+                if ref in datasheet_specs
+            }
 
     if not chunks:
         return ReviewReport(
