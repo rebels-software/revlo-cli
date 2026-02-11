@@ -495,8 +495,8 @@ if not caps_on_vdd:
 
 ## Tech Stack
 
-- **Frontend:** Nuxt.js 3 + shadcn-vue (pnpm)
-  - **Framework**: Nuxt.js 3 (Vue 3, file-based routing, SSR/SSG)
+- **Frontend:** Nuxt.js 4 + shadcn-vue (pnpm)
+  - **Framework**: Nuxt.js 4 (Vue 3, file-based routing, SSR/SSG)
   - **Package manager**: pnpm (or bun)
   - **UI Components**: shadcn-vue (Radix Vue primitives + Tailwind CSS)
   - **Styling**: Tailwind CSS 3
@@ -601,7 +601,7 @@ power_pins = sch.find_pins_by_type("U1", "power_in")
 
 **Bonus: MCP Server** — The library includes an MCP server with 15 tools. We could potentially expose this to users or use it for schematic manipulation if needed.
 
-### Frontend Structure (Nuxt.js 3 + shadcn-vue)
+### Frontend Structure (Nuxt.js 4 + shadcn-vue)
 
 ```
 frontend/
@@ -834,7 +834,7 @@ revlo/
 │   ├── pyproject.toml
 │   └── README.md
 │
-├── frontend/                  # Nuxt.js 3 + shadcn-vue frontend (pnpm)
+├── frontend/                  # Nuxt.js 4 + shadcn-vue frontend (pnpm)
 │   ├── nuxt.config.ts
 │   ├── package.json
 │   ├── pnpm-lock.yaml         # Lockfile (commit to git)
