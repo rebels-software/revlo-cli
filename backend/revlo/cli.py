@@ -95,6 +95,10 @@ def _run_review(args: argparse.Namespace) -> None:
 
 def main() -> None:
     """CLI entry point."""
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     logging.basicConfig()
 
     parser = _build_parser()

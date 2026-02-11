@@ -92,6 +92,7 @@ dependencies = [
     { name = "kicad-sch-api" },
     { name = "kiutils" },
     { name = "pydantic" },
+    { name = "python-dotenv" },
     { name = "uvicorn" },
 ]
 
@@ -110,6 +111,7 @@ requires-dist = [
     { name = "kicad-sch-api", specifier = ">=0.5.6" },
     { name = "kiutils", specifier = ">=1.4.8" },
     { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "uvicorn", specifier = ">=0.40.0" },
 ]
 
