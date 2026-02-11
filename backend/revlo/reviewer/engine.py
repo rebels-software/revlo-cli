@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import json
 import logging
+import os
 
 import anthropic
 
@@ -16,13 +17,17 @@ from revlo.reviewer.prompts import build_review_prompt
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-sonnet-4-20250514"
+MODEL_SONNET = "claude-sonnet-4-5-20250929"
+MODEL_OPUS = "claude-opus-4-6"
+DEFAULT_MODEL = MODEL_SONNET
+
 _MAX_TOKENS = 4096
 
 
 async def _review_chunk(
     client: anthropic.AsyncAnthropic,
     chunk: ReviewChunk,
+    model: str = DEFAULT_MODEL,
 ) -> list[Finding]:
     """Send a single chunk to Claude and parse findings from the response.
 
@@ -32,7 +37,7 @@ async def _review_chunk(
 
     try:
         response = await client.messages.create(
-            model=_MODEL,
+            model=model,
             max_tokens=_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -87,17 +92,28 @@ def _build_summary(findings: list[Finding]) -> str:
     )
 
 
-async def review_schematic(schematic: ParsedSchematic) -> ReviewReport:
+async def review_schematic(
+    schematic: ParsedSchematic,
+    model: str | None = None,
+) -> ReviewReport:
     """Review a parsed schematic by sending chunks to Claude concurrently.
 
     1. Splits the schematic into ReviewChunks via ``chunk_schematic()``.
     2. Builds a prompt for each chunk via ``build_review_prompt()``.
-    3. Sends all prompts concurrently to ``claude-sonnet-4-20250514``.
+    3. Sends all prompts concurrently to the chosen Claude model.
     4. Collects findings and returns a ``ReviewReport``.
+
+    Args:
+        schematic: The parsed schematic to review.
+        model: Claude model ID to use. If *None*, reads from the
+            ``REVLO_MODEL`` environment variable, defaulting to
+            :data:`DEFAULT_MODEL` (Sonnet).
 
     Malformed responses are logged and skipped -- this function never raises
     due to bad LLM output.
     """
+    resolved_model = model or os.environ.get("REVLO_MODEL", DEFAULT_MODEL)
+
     chunks = chunk_schematic(schematic)
 
     if not chunks:
@@ -110,7 +126,7 @@ async def review_schematic(schematic: ParsedSchematic) -> ReviewReport:
 
     client = anthropic.AsyncAnthropic()
 
-    tasks = [_review_chunk(client, chunk) for chunk in chunks]
+    tasks = [_review_chunk(client, chunk, model=resolved_model) for chunk in chunks]
     results = await asyncio.gather(*tasks)
 
     all_findings: list[Finding] = []

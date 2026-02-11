@@ -22,7 +22,14 @@ from revlo.parser.models import (
     PinConnection,
     TitleBlockInfo,
 )
-from revlo.reviewer.engine import _build_summary, _review_chunk, review_schematic
+from revlo.reviewer.engine import (
+    DEFAULT_MODEL,
+    MODEL_OPUS,
+    MODEL_SONNET,
+    _build_summary,
+    _review_chunk,
+    review_schematic,
+)
 from revlo.reviewer.models import (
     Finding,
     FindingCategory,
@@ -352,7 +359,7 @@ class TestReviewSchematic:
 
     @pytest.mark.asyncio
     async def test_uses_correct_model(self):
-        """Verify the engine sends requests to claude-sonnet-4-20250514."""
+        """Verify the engine sends requests to the default model."""
         schematic = _make_schematic()
         response = _make_api_response("[]")
         mock_create = AsyncMock(return_value=response)
@@ -361,9 +368,9 @@ class TestReviewSchematic:
             MockClient.return_value.messages.create = mock_create
             await review_schematic(schematic)
 
-        # Check that every call used the correct model
+        # Check that every call used the default model
         for call in mock_create.call_args_list:
-            assert call.kwargs["model"] == "claude-sonnet-4-20250514"
+            assert call.kwargs["model"] == DEFAULT_MODEL
 
     @pytest.mark.asyncio
     async def test_uses_user_role_messages(self):

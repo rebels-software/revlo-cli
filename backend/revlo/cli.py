@@ -10,7 +10,7 @@ import sys
 
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
-from revlo.reviewer import review_schematic
+from revlo.reviewer import MODEL_OPUS, MODEL_SONNET, review_schematic
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -40,6 +40,12 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="json_output",
         help="Output raw JSON instead of markdown",
     )
+    review.add_argument(
+        "--model",
+        choices=["sonnet", "opus"],
+        default=None,
+        help="Claude model to use for review (default: sonnet via env/fallback)",
+    )
 
     return parser
 
@@ -68,9 +74,13 @@ def _run_review(args: argparse.Namespace) -> None:
         print(f"Error: failed to parse schematic: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # Resolve model choice
+    _model_map = {"sonnet": MODEL_SONNET, "opus": MODEL_OPUS}
+    model: str | None = _model_map[args.model] if args.model else None
+
     # Run review
     try:
-        report = asyncio.run(review_schematic(parsed))
+        report = asyncio.run(review_schematic(parsed, model=model))
     except Exception as exc:
         print(f"Error: review failed: {exc}", file=sys.stderr)
         sys.exit(1)
