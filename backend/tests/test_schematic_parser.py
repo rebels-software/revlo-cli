@@ -1,5 +1,6 @@
 """Test suite for schematic parser in revlo.parser.schematic."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -8,6 +9,8 @@ from revlo.parser.models import (
     ParsedSchematic,
     TitleBlockInfo,
 )
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 class TestParseSchematicImport:
@@ -470,3 +473,38 @@ class TestFullSchematicParsing:
             assert len(result.unconnected_pins) == 1  # Power symbol pin is unconnected
             assert isinstance(result.title_block, TitleBlockInfo)
             assert result.title_block.title == "Full Test"
+
+
+class TestUnsupportedFormatDetection:
+    """Test early detection of unsupported schematic formats."""
+
+    def test_kicad5_eeeschema_file_raises_value_error(self):
+        """KiCad 5 EESchema file is detected with an actionable error message."""
+        fixture = str(FIXTURES_DIR / "legacy_kicad5.sch")
+        with pytest.raises(
+            ValueError,
+            match="KiCad 5.*EESchema.*KiCad 8 or 9.*re-save",
+        ):
+            parse_schematic(fixture)
+
+    def test_eagle_schematic_file_raises_value_error(self):
+        """Eagle schematic file is detected with a clear error message."""
+        fixture = str(FIXTURES_DIR / "eagle_schematic.sch")
+        with pytest.raises(ValueError, match="Eagle schematic.*KiCad 6\\+"):
+            parse_schematic(fixture)
+
+    def test_unknown_sch_extension_raises_value_error(self):
+        """A .sch file with unrecognised content gets a generic unsupported error."""
+        fixture = str(FIXTURES_DIR / "unknown_format.sch")
+        with pytest.raises(ValueError, match="Unsupported schematic format"):
+            parse_schematic(fixture)
+
+    def test_valid_kicad_sch_file_not_blocked(self):
+        """A real .kicad_sch file passes through format detection without error."""
+        kicad_sch = (
+            FIXTURES_DIR / "kicad_projects"
+            / "STM32F103CBT8_Devel" / "STM32103_Devel.kicad_sch"
+        )
+        if kicad_sch.exists():
+            result = parse_schematic(str(kicad_sch))
+            assert isinstance(result, ParsedSchematic)

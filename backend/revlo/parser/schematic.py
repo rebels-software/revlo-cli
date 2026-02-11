@@ -22,6 +22,40 @@ from revlo.parser.models import (
 logger = logging.getLogger(__name__)
 
 
+def _detect_unsupported_format(sch_path: Path) -> None:
+    """Detect legacy KiCad 5 or Eagle schematic formats and raise helpful errors.
+
+    Reads the first few lines of the file to identify unsupported formats
+    before kicad-sch-api attempts to parse it (which would give a generic error).
+
+    Raises:
+        ValueError: If the file is a recognised but unsupported format.
+    """
+    try:
+        head = sch_path.read_text(encoding="utf-8", errors="ignore")[:2048]
+    except OSError:
+        return  # If we can't read the file, let ksa.Schematic.load() handle it
+
+    if head.startswith("EESchema Schematic File Version"):
+        raise ValueError(
+            "This is a KiCad 5 (EESchema) file. Revlo only supports KiCad 6+ "
+            "(.kicad_sch) format. Please open this file in KiCad 8 or 9 and "
+            "re-save it to convert to the modern format."
+        )
+
+    if head.lstrip().startswith("<?xml") and "<eagle" in head:
+        raise ValueError(
+            "This is an Eagle schematic file. Revlo only supports KiCad 6+ "
+            "(.kicad_sch) format."
+        )
+
+    if sch_path.suffix == ".sch":
+        raise ValueError(
+            "Unsupported schematic format. Revlo only supports KiCad 6+ "
+            "(.kicad_sch) files."
+        )
+
+
 def parse_schematic(path: str) -> ParsedSchematic:
     """Parse a KiCad schematic file into a structured ParsedSchematic model.
 
@@ -33,11 +67,14 @@ def parse_schematic(path: str) -> ParsedSchematic:
 
     Raises:
         FileNotFoundError: If the schematic file does not exist.
+        ValueError: If the file is a recognised but unsupported format.
         kicad_sch_api.ValidationError: If the file cannot be parsed.
     """
     sch_path = Path(path)
     if not sch_path.exists():
         raise FileNotFoundError(f"Schematic file not found: {path}")
+
+    _detect_unsupported_format(sch_path)
 
     sch = ksa.Schematic.load(str(sch_path))
 
