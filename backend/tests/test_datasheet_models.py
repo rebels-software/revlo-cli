@@ -158,8 +158,10 @@ def test_package_exports():
         "NormalizedPartNumber",
         "PinFunction",
         "download_pdf",
+        "extract_spec",
         "extract_text",
         "normalize_part",
         "normalize_schematic_parts",
+        "resolve_datasheet_url",
     }
     assert set(datasheet.__all__) == expected
