@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from revlo.datasheet.models import DatasheetSpec
 from revlo.parser.models import (
     ParsedComponent,
     ParsedNet,
@@ -23,6 +24,8 @@ class ReviewChunk(BaseModel):
     components: list[ParsedComponent] = Field(default_factory=list)
     nets: list[ParsedNet] = Field(default_factory=list)
     unconnected_pins: list[PinConnection] = Field(default_factory=list)
+    datasheet_specs: dict[str, DatasheetSpec] = Field(default_factory=dict)
+    # Key is component reference (e.g. "U1"), value is its DatasheetSpec
 
 
 def _is_ic(comp: ParsedComponent) -> bool:

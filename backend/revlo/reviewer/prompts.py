@@ -88,15 +88,60 @@ def _format_chunk_data(chunk: ReviewChunk) -> str:
             lines.append(f"- {uc.component_ref} pin {uc.pin_number} ({uc.pin_name})")
         sections.append("\n".join(lines))
 
+    # -- Datasheet Specifications --------------------------------------------
+    if chunk.datasheet_specs:
+        lines = ["## Datasheet Specifications"]
+        for ref, spec in sorted(chunk.datasheet_specs.items()):
+            lines.append(f"### {ref}: {spec.mpn}")
+            if spec.manufacturer:
+                lines.append(f"- Manufacturer: {spec.manufacturer}")
+            if spec.description:
+                lines.append(f"- Description: {spec.description}")
+            if spec.supply_voltage_min is not None or spec.supply_voltage_max is not None:
+                vmin = spec.supply_voltage_min if spec.supply_voltage_min is not None else "?"
+                vmax = spec.supply_voltage_max if spec.supply_voltage_max is not None else "?"
+                lines.append(f"- Supply Voltage: {vmin}V to {vmax}V")
+            if spec.max_current is not None:
+                lines.append(f"- Max Current: {spec.max_current}A")
+            if spec.absolute_max_ratings:
+                lines.append("- Absolute Max Ratings:")
+                for k, v in spec.absolute_max_ratings.items():
+                    lines.append(f"  - {k}: {v}")
+            if spec.recommended_operating:
+                lines.append("- Recommended Operating:")
+                for k, v in spec.recommended_operating.items():
+                    lines.append(f"  - {k}: {v}")
+            if spec.pin_functions:
+                lines.append("- Pin Functions:")
+                for pf in spec.pin_functions:
+                    desc = f" — {pf.function_description}" if pf.function_description else ""
+                    etype = f" [{pf.electrical_type}]" if pf.electrical_type else ""
+                    lines.append(f"  - Pin {pf.pin_number} ({pf.name}){etype}{desc}")
+            if spec.notes:
+                lines.append("- Notes:")
+                for note in spec.notes:
+                    lines.append(f"  - {note}")
+        sections.append("\n".join(lines))
+
     return "\n\n".join(sections)
 
 
 # ---------------------------------------------------------------------------
 # Per-chunk-type prompt builders
 # ---------------------------------------------------------------------------
+_DATASHEET_VERIFICATION_INSTRUCTION = """\
+
+If datasheet specifications are provided above, use them to verify:
+- Component values match datasheet recommended values
+- Pin connections match datasheet pin functions
+- Operating conditions are within datasheet limits
+- Required external components (caps, resistors) are present per datasheet"""
+
+
 def _build_ic_context_prompt(chunk: ReviewChunk) -> str:
     """Build a review prompt for an IC-context chunk."""
     chunk_data = _format_chunk_data(chunk)
+    datasheet_instruction = _DATASHEET_VERIFICATION_INSTRUCTION if chunk.datasheet_specs else ""
 
     return f"""\
 You are an expert electronic design engineer reviewing a KiCad schematic.
@@ -116,6 +161,7 @@ Evaluate the schematic data above against every item in this checklist:
 For each checklist item, determine whether the design meets the requirement based \
 on the component data, net connections, and unconnected pins provided. If a \
 checklist item is not applicable (e.g. no clock pins exist), skip it.
+{datasheet_instruction}
 
 ## Output Format
 
@@ -139,6 +185,7 @@ given only schematic data (no PCB layout information is available).
 def _build_power_rail_prompt(chunk: ReviewChunk) -> str:
     """Build a review prompt for a power-rail chunk."""
     chunk_data = _format_chunk_data(chunk)
+    datasheet_instruction = _DATASHEET_VERIFICATION_INSTRUCTION if chunk.datasheet_specs else ""
 
     return f"""\
 You are an expert electronic design engineer reviewing a KiCad schematic.
@@ -158,6 +205,7 @@ Evaluate the schematic data above against every item in this checklist:
 For each checklist item, determine whether the design meets the requirement based \
 on the component data, net connections, and unconnected pins provided. If a \
 checklist item is not applicable, skip it.
+{datasheet_instruction}
 
 ## Output Format
 
