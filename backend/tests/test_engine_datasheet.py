@@ -1,0 +1,497 @@
+"""Test suite for review engine datasheet specs integration (US-021).
+
+Tests that datasheet_specs parameter is accepted and specs are correctly injected
+into chunks before prompt generation. All Anthropic API calls are fully mocked.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from revlo.datasheet.models import DatasheetSpec, PinFunction
+from revlo.parser.models import (
+    ParsedComponent,
+    ParsedNet,
+    ParsedPin,
+    ParsedSchematic,
+    PinConnection,
+    TitleBlockInfo,
+)
+from revlo.reviewer.engine import review_schematic
+from revlo.reviewer.models import ReviewReport
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _make_api_response(findings_data: list[dict]):
+    """Create a mock API response with a tool_use content block."""
+    block = SimpleNamespace(
+        type="tool_use",
+        id="toolu_test",
+        name="record_findings",
+        input={"findings": findings_data},
+    )
+    return SimpleNamespace(content=[block])
+
+
+def _make_schematic(**overrides) -> ParsedSchematic:
+    """Create a minimal ParsedSchematic with one IC and supporting nets."""
+    defaults = dict(
+        components=[
+            ParsedComponent(
+                reference="U1",
+                value="STM32F103",
+                lib_id="MCU_ST:STM32F103",
+                footprint="LQFP-48",
+                pins=[
+                    ParsedPin(
+                        number="1",
+                        name="VCC",
+                        electrical_type="power_in",
+                        connected_net="VCC",
+                    ),
+                    ParsedPin(
+                        number="2",
+                        name="PA0",
+                        electrical_type="bidirectional",
+                        connected_net="SIG1",
+                    ),
+                ],
+            ),
+            ParsedComponent(
+                reference="C1",
+                value="100nF",
+                lib_id="Device:C",
+                footprint="0402",
+                pins=[
+                    ParsedPin(
+                        number="1",
+                        name="1",
+                        electrical_type="passive",
+                        connected_net="VCC",
+                    ),
+                    ParsedPin(
+                        number="2",
+                        name="2",
+                        electrical_type="passive",
+                        connected_net="GND",
+                    ),
+                ],
+            ),
+        ],
+        nets=[
+            ParsedNet(
+                name="VCC",
+                pins=[
+                    PinConnection(component_ref="U1", pin_number="1", pin_name="VCC"),
+                    PinConnection(component_ref="C1", pin_number="1", pin_name="1"),
+                ],
+                is_power=True,
+            ),
+            ParsedNet(
+                name="SIG1",
+                pins=[
+                    PinConnection(component_ref="U1", pin_number="2", pin_name="PA0"),
+                ],
+                is_power=False,
+            ),
+        ],
+        power_symbols=[],
+        unconnected_pins=[],
+        title_block=TitleBlockInfo(title="Test Board"),
+    )
+    defaults.update(overrides)
+    return ParsedSchematic(**defaults)
+
+
+def _make_multi_ic_schematic() -> ParsedSchematic:
+    """Create a schematic with multiple ICs for testing spec injection."""
+    return ParsedSchematic(
+        components=[
+            ParsedComponent(
+                reference="U1",
+                value="STM32F103",
+                lib_id="MCU_ST:STM32F103",
+                footprint="LQFP-48",
+                pins=[
+                    ParsedPin(
+                        number="1",
+                        name="VCC",
+                        electrical_type="power_in",
+                        connected_net="VCC",
+                    ),
+                ],
+            ),
+            ParsedComponent(
+                reference="U2",
+                value="LM358",
+                lib_id="Amplifier_Operational:LM358",
+                footprint="SOIC-8",
+                pins=[
+                    ParsedPin(
+                        number="8",
+                        name="VCC",
+                        electrical_type="power_in",
+                        connected_net="VCC",
+                    ),
+                ],
+            ),
+            ParsedComponent(
+                reference="C1",
+                value="100nF",
+                lib_id="Device:C",
+                footprint="0402",
+                pins=[
+                    ParsedPin(
+                        number="1",
+                        name="1",
+                        electrical_type="passive",
+                        connected_net="VCC",
+                    ),
+                    ParsedPin(
+                        number="2",
+                        name="2",
+                        electrical_type="passive",
+                        connected_net="GND",
+                    ),
+                ],
+            ),
+        ],
+        nets=[
+            ParsedNet(
+                name="VCC",
+                pins=[
+                    PinConnection(component_ref="U1", pin_number="1", pin_name="VCC"),
+                    PinConnection(component_ref="U2", pin_number="8", pin_name="VCC"),
+                    PinConnection(component_ref="C1", pin_number="1", pin_name="1"),
+                ],
+                is_power=True,
+            ),
+        ],
+        power_symbols=[],
+        unconnected_pins=[],
+        title_block=TitleBlockInfo(title="Multi-IC Board"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test datasheet_specs parameter acceptance
+# ---------------------------------------------------------------------------
+class TestDatasheetSpecsParameter:
+    @pytest.mark.asyncio
+    async def test_accepts_none(self):
+        """Test that review_schematic accepts datasheet_specs=None (backward compat)."""
+        schematic = _make_schematic()
+        response = _make_api_response([])
+
+        with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
+            MockClient.return_value.messages.create = AsyncMock(return_value=response)
+            report = await review_schematic(schematic, datasheet_specs=None)
+
+        assert isinstance(report, ReviewReport)
+        assert report.findings == []
+
+    @pytest.mark.asyncio
+    async def test_accepts_empty_dict(self):
+        """Test that review_schematic accepts datasheet_specs={} (empty dict)."""
+        schematic = _make_schematic()
+        response = _make_api_response([])
+
+        with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
+            MockClient.return_value.messages.create = AsyncMock(return_value=response)
+            report = await review_schematic(schematic, datasheet_specs={})
+
+        assert isinstance(report, ReviewReport)
+        assert report.findings == []
+
+    @pytest.mark.asyncio
+    async def test_accepts_valid_specs_dict(self):
+        """Test that review_schematic accepts a valid datasheet_specs dict."""
+        schematic = _make_schematic()
+        specs = {
+            "U1": DatasheetSpec(
+                mpn="STM32F103C8T6",
+                manufacturer="STMicroelectronics",
+                description="ARM Cortex-M3 MCU",
+                supply_voltage_min=2.0,
+                supply_voltage_max=3.6,
+            )
+        }
+        response = _make_api_response([])
+
+        with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
+            MockClient.return_value.messages.create = AsyncMock(return_value=response)
+            report = await review_schematic(schematic, datasheet_specs=specs)
+
+        assert isinstance(report, ReviewReport)
+
+
+# ---------------------------------------------------------------------------
+# Test spec injection into chunks
+# ---------------------------------------------------------------------------
+class TestSpecInjectionIntoChunks:
+    @pytest.mark.asyncio
+    async def test_specs_none_produces_empty_chunk_specs(self):
+        """Test that datasheet_specs=None results in empty chunk.datasheet_specs."""
+        schematic = _make_schematic()
+        response = _make_api_response([])
+
+        chunks_captured = []
+
+        async def capture_chunks_create(model, max_tokens, messages, tools, tool_choice):
+            # Extract the prompt to see if specs are mentioned
+            prompt = messages[0]["content"]
+            # We can't easily inspect chunks here, so we'll use a different approach
+            return response
+
+        with (
+            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
+            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
+            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
+        ):
+            from revlo.reviewer.chunker import ReviewChunk
+
+            # Create a test chunk
+            test_chunk = ReviewChunk(
+                chunk_type="ic_context",
+                label="U1 - STM32F103",
+                components=[schematic.components[0]],
+            )
+            mock_chunk_schematic.return_value = [test_chunk]
+            mock_review_chunk.return_value = []
+
+            await review_schematic(schematic, datasheet_specs=None)
+
+            # Verify chunk still has empty datasheet_specs
+            assert test_chunk.datasheet_specs == {}
+
+    @pytest.mark.asyncio
+    async def test_matching_specs_injected_into_chunk(self):
+        """Test that specs for components in a chunk are injected into chunk.datasheet_specs."""
+        schematic = _make_schematic()
+        specs = {
+            "U1": DatasheetSpec(
+                mpn="STM32F103C8T6",
+                manufacturer="STMicroelectronics",
+                description="ARM Cortex-M3 MCU",
+            )
+        }
+        response = _make_api_response([])
+
+        with (
+            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
+            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
+            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
+        ):
+            from revlo.reviewer.chunker import ReviewChunk
+
+            # Create a test chunk with U1
+            test_chunk = ReviewChunk(
+                chunk_type="ic_context",
+                label="U1 - STM32F103",
+                components=[schematic.components[0]],  # U1
+            )
+            mock_chunk_schematic.return_value = [test_chunk]
+            mock_review_chunk.return_value = []
+
+            await review_schematic(schematic, datasheet_specs=specs)
+
+            # Verify U1's spec was injected
+            assert "U1" in test_chunk.datasheet_specs
+            assert test_chunk.datasheet_specs["U1"] == specs["U1"]
+
+    @pytest.mark.asyncio
+    async def test_non_matching_specs_not_injected(self):
+        """Test that specs for components NOT in a chunk are not injected."""
+        schematic = _make_multi_ic_schematic()
+        specs = {
+            "U1": DatasheetSpec(mpn="STM32F103C8T6", manufacturer="STMicroelectronics"),
+            "U2": DatasheetSpec(mpn="LM358", manufacturer="Texas Instruments"),
+        }
+
+        with (
+            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
+            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
+            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
+        ):
+            from revlo.reviewer.chunker import ReviewChunk
+
+            # Create two chunks: one for U1, one for U2
+            chunk_u1 = ReviewChunk(
+                chunk_type="ic_context",
+                label="U1 - STM32F103",
+                components=[schematic.components[0]],  # U1 only
+            )
+            chunk_u2 = ReviewChunk(
+                chunk_type="ic_context",
+                label="U2 - LM358",
+                components=[schematic.components[1]],  # U2 only
+            )
+            mock_chunk_schematic.return_value = [chunk_u1, chunk_u2]
+            mock_review_chunk.return_value = []
+
+            await review_schematic(schematic, datasheet_specs=specs)
+
+            # Verify each chunk only has its own spec
+            assert "U1" in chunk_u1.datasheet_specs
+            assert "U2" not in chunk_u1.datasheet_specs
+
+            assert "U2" in chunk_u2.datasheet_specs
+            assert "U1" not in chunk_u2.datasheet_specs
+
+    @pytest.mark.asyncio
+    async def test_chunk_with_multiple_components_gets_all_matching_specs(self):
+        """Test that a chunk with multiple components gets all matching specs."""
+        schematic = _make_multi_ic_schematic()
+        specs = {
+            "U1": DatasheetSpec(mpn="STM32F103C8T6", manufacturer="STMicroelectronics"),
+            "U2": DatasheetSpec(mpn="LM358", manufacturer="Texas Instruments"),
+            "C1": DatasheetSpec(mpn="Generic", manufacturer="Generic"),
+        }
+
+        with (
+            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
+            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
+            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
+        ):
+            from revlo.reviewer.chunker import ReviewChunk
+
+            # Create a chunk with U1 and C1
+            chunk = ReviewChunk(
+                chunk_type="ic_context",
+                label="U1 - STM32F103",
+                components=[
+                    schematic.components[0],  # U1
+                    schematic.components[2],  # C1
+                ],
+            )
+            mock_chunk_schematic.return_value = [chunk]
+            mock_review_chunk.return_value = []
+
+            await review_schematic(schematic, datasheet_specs=specs)
+
+            # Verify both U1 and C1 specs are in the chunk
+            assert "U1" in chunk.datasheet_specs
+            assert "C1" in chunk.datasheet_specs
+            assert "U2" not in chunk.datasheet_specs
+
+    @pytest.mark.asyncio
+    async def test_specs_for_nonexistent_refs_ignored(self):
+        """Test that specs for refs not in the schematic are silently ignored."""
+        schematic = _make_schematic()
+        specs = {
+            "U1": DatasheetSpec(mpn="STM32F103C8T6", manufacturer="STMicroelectronics"),
+            "U99": DatasheetSpec(mpn="NonExistent", manufacturer="Fake"),
+        }
+
+        with (
+            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
+            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
+            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
+        ):
+            from revlo.reviewer.chunker import ReviewChunk
+
+            test_chunk = ReviewChunk(
+                chunk_type="ic_context",
+                label="U1 - STM32F103",
+                components=[schematic.components[0]],  # U1 only
+            )
+            mock_chunk_schematic.return_value = [test_chunk]
+            mock_review_chunk.return_value = []
+
+            await review_schematic(schematic, datasheet_specs=specs)
+
+            # Verify only U1 spec was injected (U99 ignored)
+            assert "U1" in test_chunk.datasheet_specs
+            assert "U99" not in test_chunk.datasheet_specs
+
+    @pytest.mark.asyncio
+    async def test_chunk_with_no_matching_specs_has_empty_dict(self):
+        """Test that chunks with components that have no matching specs get empty dict."""
+        schematic = _make_schematic()
+        # Provide specs for U2 (which doesn't exist), not U1
+        specs = {
+            "U2": DatasheetSpec(mpn="NonExistent", manufacturer="Fake"),
+        }
+
+        with (
+            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
+            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
+            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
+        ):
+            from revlo.reviewer.chunker import ReviewChunk
+
+            test_chunk = ReviewChunk(
+                chunk_type="ic_context",
+                label="U1 - STM32F103",
+                components=[schematic.components[0]],  # U1
+            )
+            mock_chunk_schematic.return_value = [test_chunk]
+            mock_review_chunk.return_value = []
+
+            await review_schematic(schematic, datasheet_specs=specs)
+
+            # Verify chunk has empty datasheet_specs (no match for U1)
+            assert test_chunk.datasheet_specs == {}
+
+    @pytest.mark.asyncio
+    async def test_specs_with_detailed_fields_preserved(self):
+        """Test that all DatasheetSpec fields are preserved in injection."""
+        schematic = _make_schematic()
+        specs = {
+            "U1": DatasheetSpec(
+                mpn="STM32F103C8T6",
+                manufacturer="STMicroelectronics",
+                description="ARM Cortex-M3 MCU with 64KB Flash",
+                supply_voltage_min=2.0,
+                supply_voltage_max=3.6,
+                max_current=0.1,
+                pin_functions=[
+                    PinFunction(
+                        pin_number="1",
+                        name="VBAT",
+                        function_description="Battery backup supply",
+                        electrical_type="power_in",
+                    )
+                ],
+                absolute_max_ratings={"VDD": "4.0V"},
+                recommended_operating={"Temp": "-40 to 85C"},
+                notes=["RoHS compliant"],
+            )
+        }
+
+        with (
+            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
+            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
+            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
+        ):
+            from revlo.reviewer.chunker import ReviewChunk
+
+            test_chunk = ReviewChunk(
+                chunk_type="ic_context",
+                label="U1 - STM32F103",
+                components=[schematic.components[0]],
+            )
+            mock_chunk_schematic.return_value = [test_chunk]
+            mock_review_chunk.return_value = []
+
+            await review_schematic(schematic, datasheet_specs=specs)
+
+            # Verify all fields are preserved
+            injected_spec = test_chunk.datasheet_specs["U1"]
+            assert injected_spec.mpn == "STM32F103C8T6"
+            assert injected_spec.manufacturer == "STMicroelectronics"
+            assert injected_spec.description == "ARM Cortex-M3 MCU with 64KB Flash"
+            assert injected_spec.supply_voltage_min == 2.0
+            assert injected_spec.supply_voltage_max == 3.6
+            assert injected_spec.max_current == 0.1
+            assert len(injected_spec.pin_functions) == 1
+            assert injected_spec.pin_functions[0].pin_number == "1"
+            assert injected_spec.absolute_max_ratings == {"VDD": "4.0V"}
+            assert injected_spec.recommended_operating == {"Temp": "-40 to 85C"}
+            assert injected_spec.notes == ["RoHS compliant"]
