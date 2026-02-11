@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -41,14 +40,24 @@ from revlo.reviewer.models import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _make_text_block(text: str):
-    """Create a mock content block with a .text attribute."""
-    return SimpleNamespace(text=text)
+def _make_tool_use_block(findings_data: list[dict]):
+    """Create a mock tool_use content block with findings input."""
+    return SimpleNamespace(
+        type="tool_use",
+        id="toolu_test",
+        name="record_findings",
+        input={"findings": findings_data},
+    )
 
 
-def _make_api_response(text: str):
-    """Create a mock API response with a single text content block."""
-    return SimpleNamespace(content=[_make_text_block(text)])
+def _make_api_response(findings_data: list[dict]):
+    """Create a mock API response with a tool_use content block."""
+    return SimpleNamespace(content=[_make_tool_use_block(findings_data)])
+
+
+def _make_text_only_response(text: str):
+    """Create a mock API response with only a text block (no tool_use)."""
+    return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
 
 
 def _valid_finding_dict(**overrides) -> dict:
@@ -159,13 +168,13 @@ class TestBuildSummary:
 # ---------------------------------------------------------------------------
 class TestReviewChunk:
     @pytest.mark.asyncio
-    async def test_valid_json_array(self):
-        """Happy path: Claude returns a valid JSON array of findings."""
+    async def test_valid_findings(self):
+        """Happy path: Claude returns valid findings via tool_use."""
         from revlo.reviewer.chunker import ReviewChunk
 
         chunk = ReviewChunk(chunk_type="ic_context", label="U1 - STM32F103")
         findings_data = [_valid_finding_dict(), _valid_finding_dict(severity="warning")]
-        response = _make_api_response(json.dumps(findings_data))
+        response = _make_api_response(findings_data)
 
         client = MagicMock()
         client.messages.create = AsyncMock(return_value=response)
@@ -177,12 +186,12 @@ class TestReviewChunk:
         assert result[1].severity == Severity.warning
 
     @pytest.mark.asyncio
-    async def test_malformed_json_logs_warning(self, caplog):
-        """Garbage text from Claude should log a warning and return empty."""
+    async def test_no_tool_use_block_logs_warning(self, caplog):
+        """Response with no tool_use block should log a warning and return empty."""
         from revlo.reviewer.chunker import ReviewChunk
 
         chunk = ReviewChunk(chunk_type="ic_context", label="U1 - BadResponse")
-        response = _make_api_response("This is not JSON at all!")
+        response = _make_text_only_response("This is not a tool call!")
 
         client = MagicMock()
         client.messages.create = AsyncMock(return_value=response)
@@ -191,15 +200,22 @@ class TestReviewChunk:
             result = await _review_chunk(client, chunk)
 
         assert result == []
-        assert "Malformed JSON" in caplog.text
+        assert "No tool_use block" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_json_not_array_logs_warning(self, caplog):
-        """A JSON object (not an array) should be rejected."""
+    async def test_findings_not_array_logs_warning(self, caplog):
+        """Tool input with findings as a non-array should be rejected."""
         from revlo.reviewer.chunker import ReviewChunk
 
         chunk = ReviewChunk(chunk_type="ic_context", label="U1 - NotArray")
-        response = _make_api_response(json.dumps({"severity": "error"}))
+        # Simulate tool_use block where findings is a dict instead of list
+        block = SimpleNamespace(
+            type="tool_use",
+            id="toolu_test",
+            name="record_findings",
+            input={"findings": {"severity": "error"}},
+        )
+        response = SimpleNamespace(content=[block])
 
         client = MagicMock()
         client.messages.create = AsyncMock(return_value=response)
@@ -208,7 +224,7 @@ class TestReviewChunk:
             result = await _review_chunk(client, chunk)
 
         assert result == []
-        assert "Expected JSON array" in caplog.text
+        assert "Expected findings array" in caplog.text
 
     @pytest.mark.asyncio
     async def test_invalid_finding_skipped(self, caplog):
@@ -221,7 +237,7 @@ class TestReviewChunk:
             {"severity": "error"},  # missing required fields
             _valid_finding_dict(severity="suggestion"),
         ]
-        response = _make_api_response(json.dumps(findings_data))
+        response = _make_api_response(findings_data)
 
         client = MagicMock()
         client.messages.create = AsyncMock(return_value=response)
@@ -236,11 +252,11 @@ class TestReviewChunk:
 
     @pytest.mark.asyncio
     async def test_empty_array_returns_no_findings(self):
-        """Claude returns [] -- no issues found."""
+        """Claude returns empty findings array -- no issues found."""
         from revlo.reviewer.chunker import ReviewChunk
 
         chunk = ReviewChunk(chunk_type="ic_context", label="U1 - Clean")
-        response = _make_api_response("[]")
+        response = _make_api_response([])
 
         client = MagicMock()
         client.messages.create = AsyncMock(return_value=response)
@@ -274,7 +290,7 @@ class TestReviewSchematic:
         """Full flow: schematic -> chunks -> prompts -> API -> report."""
         schematic = _make_schematic()
         findings_data = [_valid_finding_dict()]
-        response = _make_api_response(json.dumps(findings_data))
+        response = _make_api_response(findings_data)
 
         mock_create = AsyncMock(return_value=response)
 
@@ -309,12 +325,12 @@ class TestReviewSchematic:
         mock_create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_malformed_responses_skipped(self, caplog):
-        """Chunks with malformed responses are skipped; report is still valid."""
+    async def test_no_tool_use_responses_skipped(self, caplog):
+        """Chunks with no tool_use block are skipped; report is still valid."""
         schematic = _make_schematic()
 
-        # Return garbage for all chunks
-        response = _make_api_response("NOT JSON {{{{")
+        # Return text-only response (no tool_use block)
+        response = _make_text_only_response("I cannot use tools")
         mock_create = AsyncMock(return_value=response)
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
@@ -327,17 +343,14 @@ class TestReviewSchematic:
         assert mock_create.call_count > 0
 
     @pytest.mark.asyncio
-    async def test_mixed_valid_and_malformed(self, caplog):
-        """Some chunks valid, some malformed -- only valid findings kept."""
+    async def test_mixed_valid_and_broken(self, caplog):
+        """Some chunks valid, some missing tool_use -- only valid findings kept."""
         schematic = _make_schematic()
-        valid_data = json.dumps([_valid_finding_dict()])
-        malformed_data = "garbage text {"
+        valid_response = _make_api_response([_valid_finding_dict()])
+        broken_response = _make_text_only_response("no tool call here")
 
-        # Return alternating valid/malformed responses
-        responses = [
-            _make_api_response(valid_data),
-            _make_api_response(malformed_data),
-        ]
+        # Return alternating valid/broken responses
+        responses = [valid_response, broken_response]
         call_count = 0
 
         async def side_effect(**kwargs):
@@ -354,14 +367,14 @@ class TestReviewSchematic:
         # At least one finding from the valid response
         assert len(report.findings) >= 1
         assert all(isinstance(f, Finding) for f in report.findings)
-        # The malformed chunk was logged
-        assert "Malformed JSON" in caplog.text
+        # The broken chunk was logged
+        assert "No tool_use block" in caplog.text
 
     @pytest.mark.asyncio
     async def test_uses_correct_model(self):
         """Verify the engine sends requests to the default model."""
         schematic = _make_schematic()
-        response = _make_api_response("[]")
+        response = _make_api_response([])
         mock_create = AsyncMock(return_value=response)
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
@@ -376,7 +389,7 @@ class TestReviewSchematic:
     async def test_uses_user_role_messages(self):
         """Verify prompts are sent as user-role messages."""
         schematic = _make_schematic()
-        response = _make_api_response("[]")
+        response = _make_api_response([])
         mock_create = AsyncMock(return_value=response)
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
@@ -390,10 +403,32 @@ class TestReviewSchematic:
             assert isinstance(messages[0]["content"], str)
 
     @pytest.mark.asyncio
+    async def test_sends_tools_and_tool_choice(self):
+        """Verify the engine passes tools and tool_choice for structured output."""
+        schematic = _make_schematic()
+        response = _make_api_response([])
+        mock_create = AsyncMock(return_value=response)
+
+        with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
+            MockClient.return_value.messages.create = mock_create
+            await review_schematic(schematic)
+
+        for call in mock_create.call_args_list:
+            # tools must be provided
+            assert "tools" in call.kwargs
+            tools = call.kwargs["tools"]
+            assert len(tools) == 1
+            assert tools[0]["name"] == "record_findings"
+            # tool_choice must force the tool
+            assert "tool_choice" in call.kwargs
+            assert call.kwargs["tool_choice"]["type"] == "tool"
+            assert call.kwargs["tool_choice"]["name"] == "record_findings"
+
+    @pytest.mark.asyncio
     async def test_concurrent_execution(self):
         """Verify chunks are processed concurrently via asyncio.gather."""
         schematic = _make_schematic()
-        response = _make_api_response("[]")
+        response = _make_api_response([])
         mock_create = AsyncMock(return_value=response)
 
         with (
@@ -415,7 +450,7 @@ class TestReviewSchematic:
             _valid_finding_dict(severity="warning"),
             _valid_finding_dict(severity="suggestion"),
         ]
-        response = _make_api_response(json.dumps(findings_data))
+        response = _make_api_response(findings_data)
         mock_create = AsyncMock(return_value=response)
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
@@ -430,7 +465,7 @@ class TestReviewSchematic:
     async def test_max_tokens_set(self):
         """Verify max_tokens is set in API calls."""
         schematic = _make_schematic()
-        response = _make_api_response("[]")
+        response = _make_api_response([])
         mock_create = AsyncMock(return_value=response)
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:

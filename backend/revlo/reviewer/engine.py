@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import json
 import logging
 import os
+from typing import Any
 
 import anthropic
 
@@ -23,6 +23,32 @@ DEFAULT_MODEL = MODEL_SONNET
 
 _MAX_TOKENS = 4096
 
+# ---------------------------------------------------------------------------
+# Tool-use schema for structured output
+# ---------------------------------------------------------------------------
+_FINDING_SCHEMA: dict[str, Any] = Finding.model_json_schema()
+
+_FINDINGS_TOOL: dict[str, Any] = {
+    "name": "record_findings",
+    "description": (
+        "Record the list of design-review findings for this schematic chunk. "
+        "Pass an empty array if no issues are found."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "findings": {
+                "type": "array",
+                "items": _FINDING_SCHEMA,
+                "description": "List of review findings (may be empty).",
+            },
+        },
+        "required": ["findings"],
+    },
+}
+
+_TOOL_CHOICE: dict[str, str] = {"type": "tool", "name": "record_findings"}
+
 
 async def _review_chunk(
     client: anthropic.AsyncAnthropic,
@@ -31,7 +57,9 @@ async def _review_chunk(
 ) -> list[Finding]:
     """Send a single chunk to Claude and parse findings from the response.
 
-    Returns an empty list and logs a warning if the response is malformed.
+    Uses tool-use (structured output) to guarantee a well-formed JSON
+    response.  Returns an empty list and logs a warning if the response
+    cannot be parsed.
     """
     prompt = build_review_prompt(chunk)
 
@@ -40,28 +68,31 @@ async def _review_chunk(
             model=model,
             max_tokens=_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
+            tools=[_FINDINGS_TOOL],
+            tool_choice=_TOOL_CHOICE,
         )
     except Exception:
         logger.warning("API call failed for chunk %r, skipping", chunk.label)
         return []
 
-    # Extract text from the response content blocks.
-    text = ""
+    # Extract the tool_use block from the response.
+    tool_input: dict[str, Any] | None = None
     for block in response.content:
-        if hasattr(block, "text"):
-            text += block.text
+        if getattr(block, "type", None) == "tool_use":
+            tool_input = block.input
+            break
 
-    try:
-        raw = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
+    if tool_input is None:
         logger.warning(
-            "Malformed JSON response for chunk %r, skipping", chunk.label
+            "No tool_use block in response for chunk %r, skipping",
+            chunk.label,
         )
         return []
 
+    raw = tool_input.get("findings")
     if not isinstance(raw, list):
         logger.warning(
-            "Expected JSON array for chunk %r, got %s, skipping",
+            "Expected findings array for chunk %r, got %s, skipping",
             chunk.label,
             type(raw).__name__,
         )
