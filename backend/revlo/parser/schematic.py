@@ -67,6 +67,33 @@ def _extract_title_block(sch: ksa.Schematic) -> TitleBlockInfo:
     )
 
 
+def _extract_properties(raw_props: dict | None) -> dict[str, str]:
+    """Normalise component properties to a flat name->value string dict.
+
+    kicad-sch-api returns a dict where:
+    - Keys starting with ``__sexp_`` hold raw s-expression lists (skip them).
+    - Other keys map to dicts with a ``'value'`` entry (extract it as str).
+    - Occasionally a value may already be a plain string.
+
+    Returns:
+        A ``dict[str, str]`` suitable for the Pydantic model.
+    """
+    if not raw_props:
+        return {}
+
+    result: dict[str, str] = {}
+    for key, val in raw_props.items():
+        if key.startswith("__sexp_"):
+            continue
+        if isinstance(val, dict):
+            result[key] = str(val.get("value", ""))
+        elif isinstance(val, str):
+            result[key] = val
+        else:
+            result[key] = str(val)
+    return result
+
+
 def _extract_components(
     sch: ksa.Schematic,
 ) -> tuple[list[ParsedComponent], list[ParsedComponent]]:
@@ -89,7 +116,7 @@ def _extract_components(
             position=(comp.position.x, comp.position.y),
             rotation=comp.rotation,
             pins=pins,
-            properties=dict(comp.properties) if comp.properties else {},
+            properties=_extract_properties(comp.properties),
         )
 
         if comp.reference.startswith("#PWR"):
