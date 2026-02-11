@@ -5,12 +5,7 @@ import pytest
 
 from revlo.parser import parse_schematic
 from revlo.parser.models import (
-    ParsedComponent,
-    ParsedNet,
-    ParsedPin,
     ParsedSchematic,
-    ParsedSheet,
-    PinConnection,
     TitleBlockInfo,
 )
 

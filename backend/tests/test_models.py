@@ -1,7 +1,5 @@
 """Test suite for Pydantic models in revlo.parser.models."""
 
-import pytest
-from pydantic import ValidationError
 
 from revlo.parser.models import (
     ParsedPin,
