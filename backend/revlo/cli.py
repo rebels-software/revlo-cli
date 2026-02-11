@@ -55,6 +55,13 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="skip_datasheet",
         help="Skip datasheet enrichment and run basic review only",
     )
+    review.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.5,
+        dest="min_confidence",
+        help="Minimum confidence threshold for findings (0.0-1.0, default: 0.5)",
+    )
 
     return parser
 
@@ -101,7 +108,12 @@ def _run_review(args: argparse.Namespace) -> None:
     # Run review
     try:
         report = asyncio.run(
-            review_schematic(parsed, model=model, datasheet_specs=datasheet_specs)
+            review_schematic(
+                parsed,
+                model=model,
+                datasheet_specs=datasheet_specs,
+                min_confidence=args.min_confidence,
+            )
         )
     except Exception as exc:
         print(f"Error: review failed: {exc}", file=sys.stderr)

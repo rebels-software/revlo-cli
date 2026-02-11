@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_SONNET = "claude-sonnet-4-5-20250929"
 MODEL_OPUS = "claude-opus-4-6"
-DEFAULT_MODEL = MODEL_SONNET
+DEFAULT_MODEL = MODEL_OPUS
 
 _MAX_TOKENS = 4096
 
@@ -68,6 +68,7 @@ async def _review_chunk(
         response = await client.messages.create(
             model=model,
             max_tokens=_MAX_TOKENS,
+            temperature=0,
             messages=[{"role": "user", "content": prompt}],
             tools=[_FINDINGS_TOOL],
             tool_choice=_TOOL_CHOICE,
@@ -128,6 +129,7 @@ async def review_schematic(
     schematic: ParsedSchematic,
     model: str | None = None,
     datasheet_specs: dict[str, DatasheetSpec] | None = None,
+    min_confidence: float = 0.5,
 ) -> ReviewReport:
     """Review a parsed schematic by sending chunks to Claude concurrently.
 
@@ -135,6 +137,7 @@ async def review_schematic(
     2. Builds a prompt for each chunk via ``build_review_prompt()``.
     3. Sends all prompts concurrently to the chosen Claude model.
     4. Collects findings and returns a ``ReviewReport``.
+    5. Filters out findings below *min_confidence*.
 
     Args:
         schematic: The parsed schematic to review.
@@ -144,6 +147,9 @@ async def review_schematic(
         datasheet_specs: Optional mapping of component reference to
             :class:`DatasheetSpec`. When provided, matching specs are
             injected into each chunk before prompt generation.
+        min_confidence: Minimum confidence threshold (0.0--1.0). Findings
+            with ``confidence < min_confidence`` are silently dropped.
+            Defaults to ``0.5``.
 
     Malformed responses are logged and skipped -- this function never raises
     due to bad LLM output.
@@ -177,6 +183,9 @@ async def review_schematic(
     all_findings: list[Finding] = []
     for chunk_findings in results:
         all_findings.extend(chunk_findings)
+
+    # Filter out low-confidence findings.
+    all_findings = [f for f in all_findings if f.confidence >= min_confidence]
 
     return ReviewReport(
         findings=all_findings,

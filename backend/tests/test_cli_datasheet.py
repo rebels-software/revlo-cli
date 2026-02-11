@@ -284,10 +284,11 @@ def test_specs_passed_to_review_schematic_via_asyncio_run(
     review_schematic_kwargs = {}
 
     # Mock review_schematic to capture its arguments
-    async def mock_review_schematic_impl(schematic, model=None, datasheet_specs=None):
+    async def mock_review_schematic_impl(schematic, model=None, datasheet_specs=None, min_confidence=0.5):
         review_schematic_kwargs["schematic"] = schematic
         review_schematic_kwargs["model"] = model
         review_schematic_kwargs["datasheet_specs"] = datasheet_specs
+        review_schematic_kwargs["min_confidence"] = min_confidence
         return mock_review_report
 
     with (
