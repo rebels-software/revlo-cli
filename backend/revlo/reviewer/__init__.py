@@ -1,6 +1,7 @@
 """Revlo reviewer package for schematic design review."""
 
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
+from revlo.reviewer.engine import review_schematic
 from revlo.reviewer.models import (
     Finding,
     FindingCategory,
@@ -19,4 +20,5 @@ __all__ = [
     "SeverityStats",
     "build_review_prompt",
     "chunk_schematic",
+    "review_schematic",
 ]
