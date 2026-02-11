@@ -151,5 +151,15 @@ def test_json_round_trip():
 def test_package_exports():
     from revlo import datasheet
 
-    expected = {"DatasheetCacheEntry", "DatasheetSpec", "NormalizedPartNumber", "PinFunction"}
+    expected = {
+        "DatasheetCache",
+        "DatasheetCacheEntry",
+        "DatasheetSpec",
+        "NormalizedPartNumber",
+        "PinFunction",
+        "download_pdf",
+        "extract_text",
+        "normalize_part",
+        "normalize_schematic_parts",
+    }
     assert set(datasheet.__all__) == expected
