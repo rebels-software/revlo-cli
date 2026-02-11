@@ -10,6 +10,7 @@ from revlo.datasheet.models import (
 )
 from revlo.datasheet.normalizer import normalize_part, normalize_schematic_parts
 from revlo.datasheet.pdf import download_pdf, extract_text
+from revlo.datasheet.pipeline import enrich_schematic
 from revlo.datasheet.resolver import resolve_datasheet_url
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "NormalizedPartNumber",
     "PinFunction",
     "download_pdf",
+    "enrich_schematic",
     "extract_spec",
     "extract_text",
     "normalize_part",
