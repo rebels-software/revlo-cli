@@ -179,7 +179,10 @@ Rules:
 - The `confidence` field (0.0-1.0) reflects how certain you are about the finding \
 given only schematic data (no PCB layout information is available).
 - Be precise: cite specific pin numbers and net names in your descriptions.
-- Prefer actionable recommendations over vague advice."""
+- Prefer actionable recommendations over vague advice.
+- NEVER report meta-findings about the schematic data itself (e.g. "incomplete data", \
+"missing net info", "insufficient information"). The data provided is complete — focus \
+exclusively on hardware design issues."""
 
 
 def _build_power_rail_prompt(chunk: ReviewChunk) -> str:
@@ -223,7 +226,10 @@ Rules:
 - The `confidence` field (0.0-1.0) reflects how certain you are about the finding \
 given only schematic data (no PCB layout information is available).
 - Be precise: cite specific pin numbers and net names in your descriptions.
-- Prefer actionable recommendations over vague advice."""
+- Prefer actionable recommendations over vague advice.
+- NEVER report meta-findings about the schematic data itself (e.g. "incomplete data", \
+"missing net info", "insufficient information"). The data provided is complete — focus \
+exclusively on hardware design issues."""
 
 
 # ---------------------------------------------------------------------------
