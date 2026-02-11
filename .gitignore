@@ -1,2 +1,5 @@
 # Concierge
 .concierge/
+
+# Environment variables
+.env
