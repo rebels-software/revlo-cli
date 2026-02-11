@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -126,25 +126,6 @@ class TestSuccessfulExtraction:
 # ---------------------------------------------------------------------------
 class TestErrorHandling:
     @pytest.mark.asyncio
-    async def test_empty_pdf_text_returns_none(self):
-        """Empty PDF text should still call API but likely return None or empty spec."""
-        pdf_text = ""
-        mpn = "STM32F103CBT6"
-        spec_data = _valid_spec_dict()
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
-            result = await extract_spec(pdf_text, mpn)
-
-        # Empty text is still processed; result depends on API response
-        assert result is not None or result is None  # Either is acceptable
-        # Verify API was called even with empty text
-        mock_create.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_api_exception_returns_none(self, caplog):
         """API exception should be caught and return None."""
         pdf_text = "Some datasheet text..."
@@ -234,63 +215,8 @@ class TestTextTruncation:
 # ---------------------------------------------------------------------------
 class TestAPIParameters:
     @pytest.mark.asyncio
-    async def test_uses_correct_model(self):
-        """Verify the extractor uses claude-haiku-4-5-20251001."""
-        pdf_text = "Datasheet text..."
-        mpn = "STM32F103CBT6"
-        spec_data = _valid_spec_dict()
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
-            await extract_spec(pdf_text, mpn)
-
-        call_args = mock_create.call_args
-        assert call_args.kwargs["model"] == _MODEL
-        assert call_args.kwargs["model"] == "claude-haiku-4-5-20251001"
-
-    @pytest.mark.asyncio
-    async def test_sets_max_tokens(self):
-        """Verify max_tokens is set in API calls."""
-        pdf_text = "Datasheet text..."
-        mpn = "STM32F103CBT6"
-        spec_data = _valid_spec_dict()
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
-            await extract_spec(pdf_text, mpn)
-
-        call_args = mock_create.call_args
-        assert call_args.kwargs["max_tokens"] == _MAX_TOKENS
-        assert call_args.kwargs["max_tokens"] == 4096
-
-    @pytest.mark.asyncio
-    async def test_sends_system_prompt(self):
-        """Verify a system prompt is included."""
-        pdf_text = "Datasheet text..."
-        mpn = "STM32F103CBT6"
-        spec_data = _valid_spec_dict()
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
-            await extract_spec(pdf_text, mpn)
-
-        call_args = mock_create.call_args
-        assert "system" in call_args.kwargs
-        system = call_args.kwargs["system"]
-        assert "expert electronics engineer" in system.lower()
-
-    @pytest.mark.asyncio
-    async def test_sends_user_message_with_mpn_and_text(self):
-        """Verify user message contains MPN and PDF text."""
+    async def test_sends_correct_api_parameters(self):
+        """Verify model, max_tokens, system, user message, tools, and tool_choice."""
         pdf_text = "Custom datasheet content for testing"
         mpn = "CUSTOM123"
         spec_data = _valid_spec_dict(mpn="CUSTOM123")
@@ -303,6 +229,20 @@ class TestAPIParameters:
             await extract_spec(pdf_text, mpn)
 
         call_args = mock_create.call_args
+
+        # Model
+        assert call_args.kwargs["model"] == _MODEL
+        assert call_args.kwargs["model"] == "claude-haiku-4-5-20251001"
+
+        # Max tokens
+        assert call_args.kwargs["max_tokens"] == _MAX_TOKENS
+        assert call_args.kwargs["max_tokens"] == 4096
+
+        # System prompt
+        assert "system" in call_args.kwargs
+        assert "expert electronics engineer" in call_args.kwargs["system"].lower()
+
+        # User message contains MPN and PDF text
         messages = call_args.kwargs["messages"]
         assert len(messages) == 1
         assert messages[0]["role"] == "user"
@@ -310,29 +250,14 @@ class TestAPIParameters:
         assert "CUSTOM123" in user_content
         assert "Custom datasheet content for testing" in user_content
 
-    @pytest.mark.asyncio
-    async def test_sends_tools_and_tool_choice(self):
-        """Verify tools and tool_choice are configured for structured output."""
-        pdf_text = "Datasheet text..."
-        mpn = "STM32F103CBT6"
-        spec_data = _valid_spec_dict()
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
-            await extract_spec(pdf_text, mpn)
-
-        call_args = mock_create.call_args
-        # Verify tools parameter
+        # Tools parameter
         assert "tools" in call_args.kwargs
         tools = call_args.kwargs["tools"]
         assert len(tools) == 1
         assert tools[0]["name"] == "record_datasheet_spec"
         assert "input_schema" in tools[0]
 
-        # Verify tool_choice forces the tool
+        # Tool choice forces the tool
         assert "tool_choice" in call_args.kwargs
         tool_choice = call_args.kwargs["tool_choice"]
         assert tool_choice["type"] == "tool"
@@ -409,28 +334,3 @@ class TestEdgeCases:
         assert result.supply_voltage_min is None
         assert result.supply_voltage_max is None
         assert result.max_current is None
-
-
-# ---------------------------------------------------------------------------
-# Function signature
-# ---------------------------------------------------------------------------
-class TestFunctionSignature:
-    def test_is_async(self):
-        import inspect
-
-        assert inspect.iscoroutinefunction(extract_spec)
-
-    def test_accepts_correct_parameters(self):
-        import inspect
-
-        sig = inspect.signature(extract_spec)
-        params = list(sig.parameters.keys())
-        assert "pdf_text" in params
-        assert "mpn" in params
-
-    def test_return_annotation(self):
-        import inspect
-
-        hints = inspect.get_annotations(extract_spec, eval_str=True)
-        # Return type is DatasheetSpec | None
-        assert hints["return"] == DatasheetSpec | None

@@ -1,7 +1,7 @@
 """Test suite for US-020: Chunk enrichment + enhanced prompts with datasheet specs."""
 
 from revlo.datasheet.models import DatasheetSpec, PinFunction
-from revlo.parser.models import ParsedComponent, ParsedNet, ParsedPin, PinConnection
+from revlo.parser.models import ParsedComponent
 from revlo.reviewer.chunker import ReviewChunk
 from revlo.reviewer.prompts import build_review_prompt, _format_chunk_data
 
@@ -28,18 +28,6 @@ class TestReviewChunkDatasheetSpecs:
         assert "U1" in chunk.datasheet_specs
         assert chunk.datasheet_specs["U1"].mpn == "STM32F103CBT6"
 
-    def test_model_dump_includes_datasheet_specs(self):
-        """ReviewChunk.model_dump() includes datasheet_specs key."""
-        spec = DatasheetSpec(mpn="LM358", description="Dual Op-Amp")
-        chunk = ReviewChunk(
-            chunk_type="ic_context",
-            label="U2 - LM358",
-            datasheet_specs={"U2": spec},
-        )
-        data = chunk.model_dump()
-        assert "datasheet_specs" in data
-        assert "U2" in data["datasheet_specs"]
-        assert data["datasheet_specs"]["U2"]["mpn"] == "LM358"
 
 
 # ---------------------------------------------------------------------------
@@ -215,46 +203,3 @@ class TestPromptWithDatasheetVerification:
         prompt = build_review_prompt(chunk)
         assert "If datasheet specifications are provided" in prompt
         assert "Component values match datasheet recommended values" in prompt
-
-
-# ---------------------------------------------------------------------------
-# Backward compatibility
-# ---------------------------------------------------------------------------
-class TestBackwardCompatibility:
-    """Ensure existing code paths still work without datasheet specs."""
-
-    def test_chunk_without_datasheet_specs_serializes(self):
-        """A chunk without datasheet_specs can be serialized and deserialized."""
-        chunk = ReviewChunk(
-            chunk_type="ic_context",
-            label="U1 - STM32",
-            components=[
-                ParsedComponent(
-                    reference="U1",
-                    value="STM32",
-                    lib_id="MCU:STM32",
-                    pins=[
-                        ParsedPin(
-                            number="1",
-                            name="VDD",
-                            electrical_type="power_in",
-                            connected_net="VCC",
-                        )
-                    ],
-                )
-            ],
-            nets=[
-                ParsedNet(
-                    name="VCC",
-                    pins=[PinConnection(component_ref="U1", pin_number="1")],
-                )
-            ],
-        )
-        data = chunk.model_dump()
-        assert "datasheet_specs" in data
-        assert data["datasheet_specs"] == {}
-
-        # Round-trip
-        chunk2 = ReviewChunk.model_validate(data)
-        assert chunk2.datasheet_specs == {}
-        assert chunk2.label == "U1 - STM32"

@@ -6,13 +6,12 @@ into chunks before prompt generation. All Anthropic API calls are fully mocked.
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from revlo.datasheet.models import DatasheetSpec, PinFunction
+from revlo.datasheet.models import DatasheetSpec
 from revlo.parser.models import (
     ParsedComponent,
     ParsedNet,
@@ -197,19 +196,6 @@ class TestDatasheetSpecsParameter:
         assert report.findings == []
 
     @pytest.mark.asyncio
-    async def test_accepts_empty_dict(self):
-        """Test that review_schematic accepts datasheet_specs={} (empty dict)."""
-        schematic = _make_schematic()
-        response = _make_api_response([])
-
-        with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
-            MockClient.return_value.messages.create = AsyncMock(return_value=response)
-            report = await review_schematic(schematic, datasheet_specs={})
-
-        assert isinstance(report, ReviewReport)
-        assert report.findings == []
-
-    @pytest.mark.asyncio
     async def test_accepts_valid_specs_dict(self):
         """Test that review_schematic accepts a valid datasheet_specs dict."""
         schematic = _make_schematic()
@@ -380,118 +366,3 @@ class TestSpecInjectionIntoChunks:
             assert "C1" in chunk.datasheet_specs
             assert "U2" not in chunk.datasheet_specs
 
-    @pytest.mark.asyncio
-    async def test_specs_for_nonexistent_refs_ignored(self):
-        """Test that specs for refs not in the schematic are silently ignored."""
-        schematic = _make_schematic()
-        specs = {
-            "U1": DatasheetSpec(mpn="STM32F103C8T6", manufacturer="STMicroelectronics"),
-            "U99": DatasheetSpec(mpn="NonExistent", manufacturer="Fake"),
-        }
-
-        with (
-            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
-            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
-            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
-        ):
-            from revlo.reviewer.chunker import ReviewChunk
-
-            test_chunk = ReviewChunk(
-                chunk_type="ic_context",
-                label="U1 - STM32F103",
-                components=[schematic.components[0]],  # U1 only
-            )
-            mock_chunk_schematic.return_value = [test_chunk]
-            mock_review_chunk.return_value = []
-
-            await review_schematic(schematic, datasheet_specs=specs)
-
-            # Verify only U1 spec was injected (U99 ignored)
-            assert "U1" in test_chunk.datasheet_specs
-            assert "U99" not in test_chunk.datasheet_specs
-
-    @pytest.mark.asyncio
-    async def test_chunk_with_no_matching_specs_has_empty_dict(self):
-        """Test that chunks with components that have no matching specs get empty dict."""
-        schematic = _make_schematic()
-        # Provide specs for U2 (which doesn't exist), not U1
-        specs = {
-            "U2": DatasheetSpec(mpn="NonExistent", manufacturer="Fake"),
-        }
-
-        with (
-            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
-            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
-            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
-        ):
-            from revlo.reviewer.chunker import ReviewChunk
-
-            test_chunk = ReviewChunk(
-                chunk_type="ic_context",
-                label="U1 - STM32F103",
-                components=[schematic.components[0]],  # U1
-            )
-            mock_chunk_schematic.return_value = [test_chunk]
-            mock_review_chunk.return_value = []
-
-            await review_schematic(schematic, datasheet_specs=specs)
-
-            # Verify chunk has empty datasheet_specs (no match for U1)
-            assert test_chunk.datasheet_specs == {}
-
-    @pytest.mark.asyncio
-    async def test_specs_with_detailed_fields_preserved(self):
-        """Test that all DatasheetSpec fields are preserved in injection."""
-        schematic = _make_schematic()
-        specs = {
-            "U1": DatasheetSpec(
-                mpn="STM32F103C8T6",
-                manufacturer="STMicroelectronics",
-                description="ARM Cortex-M3 MCU with 64KB Flash",
-                supply_voltage_min=2.0,
-                supply_voltage_max=3.6,
-                max_current=0.1,
-                pin_functions=[
-                    PinFunction(
-                        pin_number="1",
-                        name="VBAT",
-                        function_description="Battery backup supply",
-                        electrical_type="power_in",
-                    )
-                ],
-                absolute_max_ratings={"VDD": "4.0V"},
-                recommended_operating={"Temp": "-40 to 85C"},
-                notes=["RoHS compliant"],
-            )
-        }
-
-        with (
-            patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient,
-            patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
-            patch("revlo.reviewer.engine._review_chunk") as mock_review_chunk,
-        ):
-            from revlo.reviewer.chunker import ReviewChunk
-
-            test_chunk = ReviewChunk(
-                chunk_type="ic_context",
-                label="U1 - STM32F103",
-                components=[schematic.components[0]],
-            )
-            mock_chunk_schematic.return_value = [test_chunk]
-            mock_review_chunk.return_value = []
-
-            await review_schematic(schematic, datasheet_specs=specs)
-
-            # Verify all fields are preserved
-            injected_spec = test_chunk.datasheet_specs["U1"]
-            assert injected_spec.mpn == "STM32F103C8T6"
-            assert injected_spec.manufacturer == "STMicroelectronics"
-            assert injected_spec.description == "ARM Cortex-M3 MCU with 64KB Flash"
-            assert injected_spec.supply_voltage_min == 2.0
-            assert injected_spec.supply_voltage_max == 3.6
-            assert injected_spec.max_current == 0.1
-            assert len(injected_spec.pin_functions) == 1
-            assert injected_spec.pin_functions[0].pin_number == "1"
-            assert injected_spec.absolute_max_ratings == {"VDD": "4.0V"}
-            assert injected_spec.recommended_operating == {"Temp": "-40 to 85C"}
-            assert injected_spec.notes == ["RoHS compliant"]

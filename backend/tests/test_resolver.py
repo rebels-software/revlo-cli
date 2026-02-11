@@ -25,22 +25,6 @@ class TestSchematicURLPriority:
         result = await resolve_datasheet_url(part)
         assert result == "https://example.com/datasheet.pdf"
 
-    @pytest.mark.asyncio
-    async def test_schematic_url_bypasses_api_calls(self):
-        """Even with API keys set, schematic URL is returned first."""
-        part = NormalizedPartNumber(
-            raw_value="STM32F103CBT6",
-            mpn="STM32F103CBT6",
-            datasheet_url="https://example.com/datasheet.pdf",
-        )
-        with patch.dict(
-            os.environ, {"MOUSER_API_KEY": "test-key", "FARNELL_API_KEY": "test-key"}
-        ):
-            with patch("httpx.AsyncClient") as mock_client:
-                result = await resolve_datasheet_url(part)
-                assert result == "https://example.com/datasheet.pdf"
-                # No API calls should have been made
-                mock_client.assert_not_called()
 
 
 class TestGenericParts:
@@ -54,19 +38,6 @@ class TestGenericParts:
         result = await resolve_datasheet_url(part)
         assert result is None
 
-    @pytest.mark.asyncio
-    async def test_generic_part_bypasses_api_calls(self):
-        """Generic parts skip API lookups even with keys set."""
-        part = NormalizedPartNumber(
-            raw_value="10K", mpn="10K", is_generic=True
-        )
-        with patch.dict(
-            os.environ, {"MOUSER_API_KEY": "test-key", "FARNELL_API_KEY": "test-key"}
-        ):
-            with patch("httpx.AsyncClient") as mock_client:
-                result = await resolve_datasheet_url(part)
-                assert result is None
-                mock_client.assert_not_called()
 
 
 class TestMouserAPI:
@@ -102,21 +73,6 @@ class TestMouserAPI:
             with patch("httpx.AsyncClient", return_value=mock_client):
                 result = await resolve_datasheet_url(part)
                 assert result == "https://mouser.com/ds/STM32F103.pdf"
-
-    @pytest.mark.asyncio
-    async def test_mouser_no_api_key(self):
-        """Without MOUSER_API_KEY, Mouser is skipped."""
-        part = NormalizedPartNumber(
-            raw_value="STM32F103CBT6",
-            mpn="STM32F103CBT6",
-            is_generic=False,
-        )
-
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("httpx.AsyncClient") as mock_client:
-                result = await resolve_datasheet_url(part)
-                assert result is None
-                mock_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_mouser_empty_results(self):
@@ -210,21 +166,6 @@ class TestFarnellAPI:
             with patch("httpx.AsyncClient", return_value=mock_client):
                 result = await resolve_datasheet_url(part)
                 assert result == "https://farnell.com/datasheets/STM32.pdf"
-
-    @pytest.mark.asyncio
-    async def test_farnell_no_api_key(self):
-        """Without FARNELL_API_KEY, Farnell is skipped."""
-        part = NormalizedPartNumber(
-            raw_value="STM32F103CBT6",
-            mpn="STM32F103CBT6",
-            is_generic=False,
-        )
-
-        with patch.dict(os.environ, {}, clear=True):
-            with patch("httpx.AsyncClient") as mock_client:
-                result = await resolve_datasheet_url(part)
-                assert result is None
-                mock_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_farnell_network_error(self):

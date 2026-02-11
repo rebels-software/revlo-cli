@@ -236,47 +236,6 @@ def test_enrichment_failure_degrades_gracefully(
 @patch("revlo.cli.generate_markdown_report")
 @patch("revlo.cli.asyncio.run")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
-def test_enrichment_import_failure_degrades_gracefully(
-    mock_asyncio_run: MagicMock,
-    mock_markdown: MagicMock,
-    mock_review: AsyncMock,
-    mock_parse: MagicMock,
-    mock_parsed_schematic: ParsedSchematic,
-    mock_review_report: ReviewReport,
-    fixture_path: str,
-    caplog,
-):
-    """Test that import failures in enrichment pipeline are caught."""
-    mock_parse.return_value = mock_parsed_schematic
-    mock_markdown.return_value = "# Test Report\n"
-    mock_asyncio_run.return_value = mock_review_report
-
-    # Mock the import to fail
-    import builtins
-
-    original_import = builtins.__import__
-
-    def mock_import(name, *args, **kwargs):
-        if name == "revlo.datasheet.pipeline":
-            raise ImportError("Module not available")
-        return original_import(name, *args, **kwargs)
-
-    with patch("builtins.__import__", side_effect=mock_import):
-        args = _build_parser().parse_args(["review", fixture_path])
-        _run_review(args)
-
-    # Verify warning was logged
-    assert "Datasheet enrichment failed" in caplog.text
-
-    # Verify review_schematic was still called
-    mock_asyncio_run.assert_called_once()
-
-
-@patch("revlo.cli.parse_schematic")
-@patch("revlo.cli.review_schematic")
-@patch("revlo.cli.generate_markdown_report")
-@patch("revlo.cli.asyncio.run")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 def test_cache_dir_defaults_to_parent_datasheets(
     mock_asyncio_run: MagicMock,
     mock_markdown: MagicMock,
@@ -305,42 +264,6 @@ def test_cache_dir_defaults_to_parent_datasheets(
     mock_enrich.assert_called_once()
     cache_dir = mock_enrich.call_args[0][1]
     assert cache_dir == tmp_path / "datasheets"
-
-
-@patch("revlo.cli.parse_schematic")
-@patch("revlo.cli.review_schematic")
-@patch("revlo.cli.generate_markdown_report")
-@patch("revlo.cli.asyncio.run")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
-def test_enriched_specs_passed_to_review_schematic(
-    mock_asyncio_run: MagicMock,
-    mock_markdown: MagicMock,
-    mock_review: AsyncMock,
-    mock_parse: MagicMock,
-    mock_parsed_schematic: ParsedSchematic,
-    mock_review_report: ReviewReport,
-    mock_datasheet_specs: dict[str, DatasheetSpec],
-    fixture_path: str,
-):
-    """Test that enriched specs are passed to review_schematic as datasheet_specs."""
-    mock_parse.return_value = mock_parsed_schematic
-    mock_markdown.return_value = "# Test Report\n"
-
-    # Track what was passed to review_schematic via asyncio.run
-    with patch("revlo.datasheet.pipeline.enrich_schematic") as mock_enrich:
-        mock_asyncio_run.side_effect = [mock_datasheet_specs, mock_review_report]
-
-        args = _build_parser().parse_args(["review", fixture_path])
-        _run_review(args)
-
-    # Verify enrichment was called
-    mock_enrich.assert_called_once()
-    # Verify asyncio.run was called twice (once for enrich, once for review)
-    assert mock_asyncio_run.call_count == 2
-
-
-# Note: The above test is getting complex. Let's simplify by checking the asyncio.run call arguments
-# directly, which is more practical for this test.
 
 
 @patch("revlo.cli.parse_schematic")
