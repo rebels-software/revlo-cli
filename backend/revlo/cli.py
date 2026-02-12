@@ -9,9 +9,12 @@ import os
 import sys
 from pathlib import Path
 
+from rich.console import Console
+
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
 from revlo.reviewer import MODEL_OPUS, MODEL_SONNET, review_schematic
+from revlo.ui import print_finding_cards, print_header, print_step, print_summary
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,12 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="min_confidence",
         help="Minimum confidence threshold for findings (0.0-1.0, default: 0.5)",
     )
+    review.add_argument(
+        "--no-tui",
+        action="store_true",
+        dest="no_tui",
+        help="Print styled summary and finding cards to stderr, then exit (no TUI)",
+    )
 
     return parser
 
@@ -69,6 +78,13 @@ def _build_parser() -> argparse.ArgumentParser:
 def _run_review(args: argparse.Namespace) -> None:
     """Execute the review subcommand."""
     path: str = args.path
+
+    # Determine whether to show Rich progress output.
+    # Suppress when --json is used so stdout stays machine-readable.
+    show_rich = not args.json_output
+
+    # Progress console always writes to stderr so it never pollutes stdout.
+    console = Console(stderr=True)
 
     # Validate file exists
     if not os.path.isfile(path):
@@ -83,16 +99,29 @@ def _run_review(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    # -- branded header --
+    if show_rich:
+        print_header(console)
+
     # Parse schematic
+    if show_rich:
+        print_step(console, "Parsing schematic...")
     try:
         parsed = parse_schematic(path)
     except Exception as exc:
         print(f"Error: failed to parse schematic: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    if show_rich:
+        n_comps = len(parsed.components)
+        n_nets = len(parsed.nets)
+        print_step(console, f"Found {n_comps} components, {n_nets} nets")
+
     # Datasheet enrichment (unless --skip-datasheet)
     datasheet_specs = None
     if not args.skip_datasheet:
+        if show_rich:
+            print_step(console, "Fetching datasheets...")
         try:
             from revlo.datasheet.pipeline import enrich_schematic
 
@@ -106,6 +135,8 @@ def _run_review(args: argparse.Namespace) -> None:
     model: str | None = _model_map[args.model] if args.model else None
 
     # Run review
+    if show_rich:
+        print_step(console, "Running review...")
     try:
         report = asyncio.run(
             review_schematic(
@@ -118,6 +149,15 @@ def _run_review(args: argparse.Namespace) -> None:
     except Exception as exc:
         print(f"Error: review failed: {exc}", file=sys.stderr)
         sys.exit(1)
+
+    # -- summary line --
+    if show_rich:
+        print_summary(console, report)
+
+    # -- no-tui mode: show finding cards then exit --
+    if args.no_tui:
+        print_finding_cards(console, report)
+        return
 
     # Format output
     if args.json_output:

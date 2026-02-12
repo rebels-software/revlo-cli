@@ -93,6 +93,7 @@ def test_build_parser_creates_review_subcommand():
     assert args.path == "test.kicad_sch"
     assert args.output is None
     assert args.json_output is False
+    assert args.no_tui is False
 
 
 def test_build_parser_with_output_flag():
@@ -117,6 +118,13 @@ def test_build_parser_with_both_flags():
     )
     assert args.output == "report.json"
     assert args.json_output is True
+
+
+def test_build_parser_with_no_tui_flag():
+    """Test --no-tui flag."""
+    parser = _build_parser()
+    args = parser.parse_args(["review", "test.kicad_sch", "--no-tui"])
+    assert args.no_tui is True
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +268,353 @@ def test_run_review_success_json_to_file(
     content = output_file.read_text()
     assert "findings" in content
     assert "summary" in content
+
+
+# ---------------------------------------------------------------------------
+# Test Rich progress output (US-026)
+# ---------------------------------------------------------------------------
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch("revlo.cli.generate_markdown_report")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_run_review_rich_progress_on_stderr(
+    mock_markdown: MagicMock,
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    capsys,
+):
+    """Test that Rich branded progress appears on stderr."""
+    mock_parse.return_value = mock_parsed_schematic
+    mock_review.return_value = mock_review_report
+    mock_markdown.return_value = "# Test Report\n"
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+
+        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet"])
+        _run_review(args)
+
+    captured = capsys.readouterr()
+    # Markdown still goes to stdout
+    assert "# Test Report" in captured.out
+    # Rich progress goes to stderr
+    assert "Revlo Review" in captured.err
+    assert "Parsing schematic" in captured.err
+    assert "Running review" in captured.err
+
+
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_run_review_json_suppresses_rich(
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    capsys,
+):
+    """Test that --json flag suppresses all Rich output."""
+    mock_parse.return_value = mock_parsed_schematic
+    mock_review.return_value = mock_review_report
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+
+        args = _build_parser().parse_args(
+            ["review", fixture_path, "--json", "--skip-datasheet"]
+        )
+        _run_review(args)
+
+    captured = capsys.readouterr()
+    # JSON goes to stdout
+    assert "findings" in captured.out
+    # NO rich output on stderr
+    assert "Revlo Review" not in captured.err
+    assert "Parsing schematic" not in captured.err
+
+
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_run_review_no_tui_prints_cards(
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    capsys,
+):
+    """Test --no-tui prints finding cards on stderr and no markdown to stdout."""
+    mock_parse.return_value = mock_parsed_schematic
+    mock_review.return_value = mock_review_report
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+
+        args = _build_parser().parse_args(
+            ["review", fixture_path, "--no-tui", "--skip-datasheet"]
+        )
+        _run_review(args)
+
+    captured = capsys.readouterr()
+    # No markdown/json on stdout
+    assert captured.out == ""
+    # Finding cards on stderr
+    assert "ERROR" in captured.err
+    assert "U1" in captured.err
+    assert "Missing decoupling capacitor" in captured.err
+    # Summary on stderr
+    assert "1 errors" in captured.err
+
+
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch("revlo.cli.generate_markdown_report")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_run_review_output_file_with_rich_progress(
+    mock_markdown: MagicMock,
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    tmp_path: Path,
+    capsys,
+):
+    """Test --output writes file and still shows Rich progress on stderr."""
+    mock_parse.return_value = mock_parsed_schematic
+    mock_review.return_value = mock_review_report
+    mock_markdown.return_value = "# Test Report\n"
+
+    output_file = tmp_path / "report.md"
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+
+        args = _build_parser().parse_args(
+            ["review", fixture_path, "--output", str(output_file), "--skip-datasheet"]
+        )
+        _run_review(args)
+
+    # File written
+    assert output_file.exists()
+    assert output_file.read_text() == "# Test Report\n"
+
+    captured = capsys.readouterr()
+    # Nothing on stdout
+    assert captured.out == ""
+    # Rich progress on stderr
+    assert "Revlo Review" in captured.err
+    assert "Parsing schematic" in captured.err
+
+
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_run_review_summary_line_severity_counts(
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    fixture_path: str,
+    capsys,
+):
+    """Test that summary line shows correct severity counts with colors."""
+    report = ReviewReport(
+        findings=[
+            Finding(
+                severity=Severity.error,
+                category=FindingCategory.decoupling,
+                component_ref="U1",
+                title="Error 1",
+                description="desc",
+                recommendation="rec",
+                confidence=0.9,
+            ),
+            Finding(
+                severity=Severity.warning,
+                category=FindingCategory.power,
+                component_ref="R7",
+                title="Warning 1",
+                description="desc",
+                recommendation="rec",
+                confidence=0.8,
+            ),
+            Finding(
+                severity=Severity.suggestion,
+                category=FindingCategory.unused_pin,
+                component_ref="U2",
+                title="Suggestion 1",
+                description="desc",
+                recommendation="rec",
+                confidence=0.7,
+            ),
+        ],
+        summary="test",
+        schematic_title="Test",
+        review_date="2026-02-12",
+    )
+    mock_parse.return_value = ParsedSchematic(
+        components=[],
+        nets=[],
+        title_block=TitleBlockInfo(
+            title="Test", date="2026-02-12", revision="1.0", company="Test"
+        ),
+    )
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = report
+        with patch("revlo.cli.generate_markdown_report", return_value="# Report\n"):
+            args = _build_parser().parse_args(
+                ["review", fixture_path, "--skip-datasheet"]
+            )
+            _run_review(args)
+
+    captured = capsys.readouterr()
+    assert "1 errors" in captured.err
+    assert "1 warnings" in captured.err
+    assert "1 suggestions" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Test ui.py helpers directly (US-026)
+# ---------------------------------------------------------------------------
+def test_ui_print_header(capsys):
+    """Test print_header outputs the branded header."""
+    from rich.console import Console
+
+    from revlo.ui import print_header
+
+    console = Console(stderr=True)
+    print_header(console)
+
+    captured = capsys.readouterr()
+    assert "Revlo Review" in captured.err
+
+
+def test_ui_print_step(capsys):
+    """Test print_step outputs a step line."""
+    from rich.console import Console
+
+    from revlo.ui import print_step
+
+    console = Console(stderr=True)
+    print_step(console, "Parsing schematic...")
+
+    captured = capsys.readouterr()
+    assert "Parsing schematic" in captured.err
+
+
+def test_ui_print_summary(capsys):
+    """Test print_summary outputs severity counts."""
+    from rich.console import Console
+
+    from revlo.ui import print_summary
+
+    report = ReviewReport(
+        findings=[
+            Finding(
+                severity=Severity.error,
+                category=FindingCategory.decoupling,
+                component_ref="U1",
+                title="Error",
+                description="d",
+                recommendation="r",
+                confidence=0.9,
+            ),
+        ],
+        summary="test",
+        schematic_title="Test",
+        review_date="2026-02-12",
+    )
+    console = Console(stderr=True)
+    print_summary(console, report)
+
+    captured = capsys.readouterr()
+    assert "1 errors" in captured.err
+    assert "0 warnings" in captured.err
+    assert "0 suggestions" in captured.err
+
+
+def test_ui_print_finding_cards(capsys):
+    """Test print_finding_cards outputs styled cards for each severity."""
+    from rich.console import Console
+
+    from revlo.ui import print_finding_cards
+
+    report = ReviewReport(
+        findings=[
+            Finding(
+                severity=Severity.error,
+                category=FindingCategory.decoupling,
+                component_ref="U1",
+                title="Missing cap",
+                description="No cap near U1.",
+                recommendation="Add 100nF.",
+                confidence=0.9,
+            ),
+            Finding(
+                severity=Severity.warning,
+                category=FindingCategory.power,
+                component_ref="R7",
+                title="High current",
+                description="R7 rated too low.",
+                recommendation="Use higher rated part.",
+                confidence=0.8,
+            ),
+            Finding(
+                severity=Severity.suggestion,
+                category=FindingCategory.unused_pin,
+                component_ref="U2",
+                title="Unused pin",
+                description="Pin 5 unconnected.",
+                recommendation="Connect or mark NC.",
+                confidence=0.7,
+            ),
+        ],
+        summary="test",
+        schematic_title="Test",
+        review_date="2026-02-12",
+    )
+    console = Console(stderr=True)
+    print_finding_cards(console, report)
+
+    captured = capsys.readouterr()
+    # Error card
+    assert "ERROR" in captured.err
+    assert "U1" in captured.err
+    assert "Missing cap" in captured.err
+    assert "No cap near U1" in captured.err
+    assert "Add 100nF" in captured.err
+    # Warning card
+    assert "WARN" in captured.err
+    assert "R7" in captured.err
+    assert "High current" in captured.err
+    # Suggestion card
+    assert "INFO" in captured.err
+    assert "U2" in captured.err
+    assert "Unused pin" in captured.err
+
+
+def test_ui_print_finding_cards_empty(capsys):
+    """Test print_finding_cards with no findings produces no output."""
+    from rich.console import Console
+
+    from revlo.ui import print_finding_cards
+
+    report = ReviewReport(
+        findings=[],
+        summary="No issues",
+        schematic_title="Test",
+        review_date="2026-02-12",
+    )
+    console = Console(stderr=True)
+    print_finding_cards(console, report)
+
+    captured = capsys.readouterr()
+    assert captured.err.strip() == ""
 
 
 # ---------------------------------------------------------------------------
