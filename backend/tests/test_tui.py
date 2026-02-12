@@ -26,7 +26,6 @@ from revlo.tui.app import (
     FindingsSidebar,
     RevloApp,
     SeverityGroupHeader,
-    StatsBar,
     _SEVERITY_LABEL,
     _SEVERITY_ORDER,
 )
@@ -215,15 +214,6 @@ class TestRevloAppCompose:
         async with app.run_test() as _pilot:
             header = app.query_one("#brand-header", BrandHeader)
             assert header is not None
-
-    @pytest.mark.asyncio
-    async def test_stats_bar_present(
-        self, sample_report: ReviewReport, schematic_path: str
-    ):
-        app = RevloApp(sample_report, schematic_path)
-        async with app.run_test() as _pilot:
-            stats = app.query_one("#stats-bar", StatsBar)
-            assert stats is not None
 
     @pytest.mark.asyncio
     async def test_filter_bar_present(

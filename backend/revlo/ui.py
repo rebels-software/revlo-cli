@@ -20,9 +20,25 @@ AMBER = "#FFB347"  # Warm Amber     -- warnings
 # ---------------------------------------------------------------------------
 
 def print_header(console: Console) -> None:
-    """Print the branded header: ``{diamond} Revlo Review``."""
-    txt = Text("\u25C6 Revlo Review", style=f"bold {TEAL}")
-    console.print(txt)
+    """Print the branded ASCII art header."""
+    console.print()
+    console.print(
+        f"  [bold {TEAL}]╦═╗ ╔═╗[/]"
+        f" [bold #E8ECF1]╦  ╦[/]"
+        f" [bold {AMBER}]╦   ╔═╗[/]"
+    )
+    console.print(
+        f"  [bold {TEAL}]╠╦╝ ║╣ [/]"
+        f" [bold #E8ECF1]╚╗╔╝[/]"
+        f" [bold {AMBER}]║   ║ ║[/]"
+    )
+    console.print(
+        f"  [bold {TEAL}]╩╚═ ╚═╝[/]"
+        f" [bold #E8ECF1] ╚╝ [/]"
+        f" [bold {AMBER}]╩═╝ ╚═╝[/]"
+    )
+    console.print("  [dim]AI-powered hardware review[/]")
+    console.print()
 
 
 def print_step(console: Console, text: str) -> None:

@@ -339,7 +339,7 @@ def test_run_review_rich_progress_on_stderr(
 
     captured = capsys.readouterr()
     # Rich progress goes to stderr
-    assert "Revlo Review" in captured.err
+    assert "AI-powered hardware review" in captured.err
     assert "Parsing schematic" in captured.err
 
 
@@ -372,7 +372,7 @@ def test_run_review_json_suppresses_rich(
     # JSON goes to stdout
     assert "findings" in captured.out
     # NO rich output on stderr
-    assert "Revlo Review" not in captured.err
+    assert "AI-powered hardware review" not in captured.err
     assert "Parsing schematic" not in captured.err
 
 
@@ -451,7 +451,7 @@ def test_run_review_output_file_with_rich_progress(
     # Nothing on stdout
     assert captured.out == ""
     # Rich progress on stderr
-    assert "Revlo Review" in captured.err
+    assert "AI-powered hardware review" in captured.err
     assert "Parsing schematic" in captured.err
 
 
@@ -599,7 +599,7 @@ def test_run_review_json_output_file_shows_rich(
     # Nothing on stdout (JSON went to file)
     assert captured.out == ""
     # Rich progress on stderr since JSON goes to file, not stdout
-    assert "Revlo Review" in captured.err
+    assert "AI-powered hardware review" in captured.err
     assert "Parsing schematic" in captured.err
 
 
@@ -646,7 +646,7 @@ def test_ui_print_header(capsys):
     print_header(console)
 
     captured = capsys.readouterr()
-    assert "Revlo Review" in captured.err
+    assert "AI-powered hardware review" in captured.err
 
 
 def test_ui_print_step(capsys):
@@ -906,7 +906,7 @@ def test_run_open_no_tui(
 
     captured = capsys.readouterr()
     # Header and summary on stderr
-    assert "Revlo Review" in captured.err
+    assert "AI-powered hardware review" in captured.err
     assert "Loaded review" in captured.err
     # Finding cards on stderr
     assert "ERROR" in captured.err
