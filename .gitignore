@@ -3,3 +3,7 @@
 
 # Environment variables
 .env
+
+# Downloaded test fixtures (large, re-downloadable)
+backend/tests/fixtures/kicad_projects/
+backend/tests/fixtures/datasheets/
