@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 _MAX_PDF_SIZE = 200 * 1024 * 1024  # 200 MB
-_CONNECT_TIMEOUT = 30.0  # seconds
+_CONNECT_TIMEOUT = 10.0  # seconds
 _READ_TIMEOUT = 60.0  # seconds
 _USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 

@@ -22,7 +22,8 @@ class TestSchematicURLPriority:
             is_generic=False,
             datasheet_url="https://example.com/datasheet.pdf",
         )
-        result = await resolve_datasheet_url(part)
+        with patch("revlo.datasheet.resolver._validate_url", return_value=True):
+            result = await resolve_datasheet_url(part)
         assert result == "https://example.com/datasheet.pdf"
 
 

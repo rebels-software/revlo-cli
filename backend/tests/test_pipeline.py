@@ -201,7 +201,7 @@ async def test_full_pipeline_success(
     # Assertions.
     assert result == {"U2": spec}
     mock_cache_instance.get.assert_called_with("LM7805CT")
-    mock_resolve.assert_called_once_with(normalized)
+    mock_resolve.assert_called_once_with(normalized, cache_dir=str(tmp_path))
     mock_download.assert_called_once_with("https://example.com/lm7805.pdf", tmp_path)
     mock_extract_text.assert_called_once_with(pdf_path)
     mock_extract_spec.assert_called_once_with("LM7805 datasheet text...", "LM7805CT")
@@ -241,7 +241,7 @@ async def test_resolve_returns_none_skips_component(
     result = await enrich_schematic(parsed, tmp_path)
 
     assert result == {}
-    mock_resolve.assert_called_once_with(normalized)
+    mock_resolve.assert_called_once_with(normalized, cache_dir=str(tmp_path))
     mock_cache_instance.save.assert_called_once()
 
 
@@ -438,7 +438,7 @@ async def test_mixed_generic_cached_resolved(
     assert "R1" not in result
 
     # Verify resolve/download/extract called only once (for U2).
-    mock_resolve.assert_called_once_with(resolved_part)
+    mock_resolve.assert_called_once_with(resolved_part, cache_dir=str(tmp_path))
     mock_download.assert_called_once()
     mock_extract_text.assert_called_once()
     mock_extract_spec.assert_called_once()
@@ -483,7 +483,7 @@ async def test_partial_success_multiple_components(
     mock_cache_class.return_value = mock_cache_instance
 
     # Mock resolver: U1 and U3 succeed, U2 fails.
-    async def resolve_side_effect(part):
+    async def resolve_side_effect(part, cache_dir=None):
         if part.mpn in ["Success1", "Success2"]:
             return f"https://example.com/{part.mpn}.pdf"
         return None

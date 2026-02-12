@@ -45,7 +45,7 @@ async def _process_component(
 
     # 2. Resolve datasheet URL.
     logger.info("[%s] Resolving datasheet URL for %s ...", ref, mpn)
-    url = await resolve_datasheet_url(part)
+    url = await resolve_datasheet_url(part, cache_dir=str(cache_dir))
     if url is None:
         logger.warning("[%s] No datasheet URL resolved for %s", ref, mpn)
         return None

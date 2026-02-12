@@ -1,7 +1,7 @@
 """Datasheet URL resolver for the datasheet intelligence pipeline.
 
 Resolves datasheet PDF URLs from multiple sources in priority order:
-1. Schematic-embedded URL (from KiCad component properties).
+1. Schematic-embedded URL (from KiCad component properties) — validated via HEAD.
 2. Mouser search API (requires MOUSER_API_KEY env var).
 3. Farnell/Element14 search API (requires FARNELL_API_KEY env var).
 """
@@ -18,6 +18,21 @@ from revlo.datasheet.models import NormalizedPartNumber
 logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 15.0  # seconds
+_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+
+async def _validate_url(url: str) -> bool:
+    """Return True if *url* is reachable (2xx/3xx HEAD response within 10s)."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=10.0, write=10.0, pool=10.0),
+            follow_redirects=True,
+            headers={"User-Agent": _USER_AGENT},
+        ) as client:
+            resp = await client.head(url)
+            return resp.status_code < 400
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        return False
 
 
 async def _query_mouser(mpn: str, api_key: str) -> str | None:
@@ -98,15 +113,22 @@ async def _query_farnell(mpn: str, api_key: str) -> str | None:
     return None
 
 
-async def resolve_datasheet_url(part: NormalizedPartNumber) -> str | None:
+async def resolve_datasheet_url(
+    part: NormalizedPartNumber,
+    cache_dir: str = "datasheets",
+) -> str | None:
     """Resolve a datasheet PDF URL for *part* from multiple sources.
 
     Priority order:
-    1. Schematic-embedded URL (``part.datasheet_url``).
+    1. Schematic-embedded URL (``part.datasheet_url``) — validated via a
+       fast HEAD request (10 s timeout) before returning.
     2. Mouser search API (if ``MOUSER_API_KEY`` env var is set).
     3. Farnell/Element14 API (if ``FARNELL_API_KEY`` env var is set).
 
     Generic/passive parts are skipped entirely (returns ``None``).
+
+    If all sources fail for a non-generic part, a user-facing warning is
+    logged advising manual PDF placement in *cache_dir*.
 
     This function never raises; errors from individual sources are logged
     as warnings and the next source is tried.
@@ -115,9 +137,15 @@ async def resolve_datasheet_url(part: NormalizedPartNumber) -> str | None:
     if part.is_generic:
         return None
 
-    # 1. Schematic-embedded URL.
+    # 1. Schematic-embedded URL — validate with a HEAD request.
     if part.datasheet_url:
-        return part.datasheet_url
+        if await _validate_url(part.datasheet_url):
+            return part.datasheet_url
+        logger.warning(
+            "Embedded datasheet URL unreachable for %s: %s",
+            part.mpn,
+            part.datasheet_url,
+        )
 
     # 2. Mouser API.
     mouser_key = os.environ.get("MOUSER_API_KEY", "")
@@ -133,4 +161,10 @@ async def resolve_datasheet_url(part: NormalizedPartNumber) -> str | None:
         if result:
             return result
 
+    # All sources exhausted.
+    logger.warning(
+        "Could not fetch datasheet for %s. Place PDF manually in %s/ for better review results.",
+        part.mpn,
+        cache_dir,
+    )
     return None
