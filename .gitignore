@@ -1,6 +1,9 @@
 # Concierge
 .concierge/
 
+# Revlo
+.revlo/
+
 # Environment variables
 .env
 
