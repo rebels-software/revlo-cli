@@ -119,6 +119,7 @@ def test_skip_datasheet_flag_defaults_to_false():
 # ---------------------------------------------------------------------------
 # Test enrichment pipeline integration
 # ---------------------------------------------------------------------------
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -129,6 +130,7 @@ def test_enrichment_pipeline_called_by_default(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     mock_datasheet_specs: dict[str, DatasheetSpec],
@@ -158,12 +160,9 @@ def test_enrichment_pipeline_called_by_default(
 
     # Verify review_schematic was called with datasheet_specs
     assert mock_asyncio_run.call_count == 2
-    review_call = mock_asyncio_run.call_args_list[1]
-    # Extract the coroutine to check the function and args
-    # Since we can't easily inspect the coroutine, we'll verify via the review mock
-    # In the actual call, review_schematic should be called with datasheet_specs
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -174,6 +173,7 @@ def test_skip_datasheet_flag_skips_enrichment(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -194,6 +194,7 @@ def test_skip_datasheet_flag_skips_enrichment(
     mock_asyncio_run.assert_called_once()
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -204,6 +205,7 @@ def test_enrichment_failure_degrades_gracefully(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -213,7 +215,7 @@ def test_enrichment_failure_degrades_gracefully(
     mock_parse.return_value = mock_parsed_schematic
     mock_markdown.return_value = "# Test Report\n"
 
-    with patch("revlo.datasheet.pipeline.enrich_schematic") as mock_enrich:
+    with patch("revlo.datasheet.pipeline.enrich_schematic"):
         # Simulate enrichment failure via asyncio.run
         mock_asyncio_run.side_effect = [
             RuntimeError("API key invalid"),
@@ -231,6 +233,7 @@ def test_enrichment_failure_degrades_gracefully(
     assert mock_asyncio_run.call_count == 2
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -241,6 +244,7 @@ def test_cache_dir_defaults_to_parent_datasheets(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     mock_datasheet_specs: dict[str, DatasheetSpec],
@@ -266,12 +270,14 @@ def test_cache_dir_defaults_to_parent_datasheets(
     assert cache_dir == tmp_path / "datasheets"
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.generate_markdown_report")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 def test_specs_passed_to_review_schematic_via_asyncio_run(
     mock_markdown: MagicMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     mock_datasheet_specs: dict[str, DatasheetSpec],

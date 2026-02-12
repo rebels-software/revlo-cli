@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
+from rich.status import Status
 
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
@@ -72,6 +73,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print styled summary and finding cards to stderr, then exit (no TUI)",
     )
 
+    # -- open subcommand: view last stored review --
+    open_cmd = subparsers.add_parser(
+        "open",
+        help="Open the last review for a schematic in the TUI",
+    )
+    open_cmd.add_argument("path", help="Path to a .kicad_sch file")
+    open_cmd.add_argument(
+        "--no-tui",
+        action="store_true",
+        dest="no_tui",
+        help="Print finding cards instead of launching TUI",
+    )
+    open_cmd.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output stored review as JSON",
+    )
+
     return parser
 
 
@@ -80,8 +100,10 @@ def _run_review(args: argparse.Namespace) -> None:
     path: str = args.path
 
     # Determine whether to show Rich progress output.
-    # Suppress when --json is used so stdout stays machine-readable.
-    show_rich = not args.json_output
+    # Suppress only when --json goes to stdout (no --output), to keep
+    # the stream machine-readable.  When --output is set, JSON goes to
+    # a file so stderr progress is fine.
+    show_rich = not (args.json_output and not args.output)
 
     # Progress console always writes to stderr so it never pollutes stdout.
     console = Console(stderr=True)
@@ -120,32 +142,57 @@ def _run_review(args: argparse.Namespace) -> None:
     # Datasheet enrichment (unless --skip-datasheet)
     datasheet_specs = None
     if not args.skip_datasheet:
-        if show_rich:
-            print_step(console, "Fetching datasheets...")
         try:
             from revlo.datasheet.pipeline import enrich_schematic
 
             cache_dir = Path(path).parent / "datasheets"
-            datasheet_specs = asyncio.run(enrich_schematic(parsed, cache_dir))
+            if show_rich:
+                with Status(
+                    "[bold #00D4AA]Fetching datasheets...",
+                    console=console,
+                    spinner="dots",
+                ):
+                    datasheet_specs = asyncio.run(
+                        enrich_schematic(parsed, cache_dir)
+                    )
+            else:
+                datasheet_specs = asyncio.run(
+                    enrich_schematic(parsed, cache_dir)
+                )
         except Exception as exc:
-            logger.warning("Datasheet enrichment failed, continuing without specs: %s", exc)
+            logger.warning(
+                "Datasheet enrichment failed, continuing without specs: %s", exc
+            )
 
     # Resolve model choice
     _model_map = {"sonnet": MODEL_SONNET, "opus": MODEL_OPUS}
     model: str | None = _model_map[args.model] if args.model else None
 
     # Run review
-    if show_rich:
-        print_step(console, "Running review...")
     try:
-        report = asyncio.run(
-            review_schematic(
-                parsed,
-                model=model,
-                datasheet_specs=datasheet_specs,
-                min_confidence=args.min_confidence,
+        if show_rich:
+            with Status(
+                "[bold #00D4AA]Running review...",
+                console=console,
+                spinner="dots",
+            ):
+                report = asyncio.run(
+                    review_schematic(
+                        parsed,
+                        model=model,
+                        datasheet_specs=datasheet_specs,
+                        min_confidence=args.min_confidence,
+                    )
+                )
+        else:
+            report = asyncio.run(
+                review_schematic(
+                    parsed,
+                    model=model,
+                    datasheet_specs=datasheet_specs,
+                    min_confidence=args.min_confidence,
+                )
             )
-        )
     except Exception as exc:
         print(f"Error: review failed: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -154,12 +201,18 @@ def _run_review(args: argparse.Namespace) -> None:
     if show_rich:
         print_summary(console, report)
 
-    # -- no-tui mode: show finding cards then exit --
-    if args.no_tui:
-        print_finding_cards(console, report)
-        return
+    # Auto-save review
+    from revlo.storage import save_review
 
-    # -- file / JSON output modes (skip TUI) --
+    saved_path = save_review(report, path)
+    if show_rich:
+        try:
+            display_path = saved_path.relative_to(Path(path).parent)
+        except ValueError:
+            display_path = saved_path
+        print_step(console, f"Review saved to {display_path}")
+
+    # -- file / JSON output modes (highest priority) --
     if args.json_output or args.output:
         if args.json_output:
             output = report.model_dump_json(indent=2)
@@ -171,13 +224,60 @@ def _run_review(args: argparse.Namespace) -> None:
                 with open(args.output, "w") as fh:
                     fh.write(output)
             except OSError as exc:
-                print(f"Error: could not write to {args.output}: {exc}", file=sys.stderr)
+                print(
+                    f"Error: could not write to {args.output}: {exc}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
         else:
             print(output)
         return
 
+    # -- no-tui mode: show finding cards then exit --
+    if args.no_tui:
+        print_finding_cards(console, report)
+        return
+
     # -- default: launch interactive TUI --
+    from revlo.tui import RevloApp
+
+    app = RevloApp(report, path)
+    app.run()
+
+
+def _run_open(args: argparse.Namespace) -> None:
+    """Open the last stored review for a schematic."""
+    from revlo.storage import load_latest_review
+
+    path = args.path
+    if not os.path.isfile(path):
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    result = load_latest_review(path)
+    if result is None:
+        print(
+            f"No review found for {path}. Run 'revlo review {path}' first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    report, meta = result
+    console = Console(stderr=True)
+
+    saved_at = meta.get("saved_at", "unknown")
+    print_header(console)
+    print_step(console, f"Loaded review from {saved_at}")
+    print_summary(console, report)
+
+    if args.json_output:
+        print(report.model_dump_json(indent=2))
+        return
+
+    if args.no_tui:
+        print_finding_cards(console, report)
+        return
+
     from revlo.tui import RevloApp
 
     app = RevloApp(report, path)
@@ -203,6 +303,8 @@ def main() -> None:
 
     if args.command == "review":
         _run_review(args)
+    elif args.command == "open":
+        _run_open(args)
     else:
         parser.print_help()
         sys.exit(1)

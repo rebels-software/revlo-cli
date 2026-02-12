@@ -5,13 +5,14 @@ All external calls (parse_schematic, review_schematic, API) are fully mocked.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from revlo.cli import _build_parser, _run_review, main
+from revlo.cli import _build_parser, _run_open, _run_review, main
 from revlo.parser.models import (
     ParsedComponent,
     ParsedSchematic,
@@ -82,6 +83,17 @@ def fixture_path() -> str:
     )
 
 
+@pytest.fixture
+def mock_save_path() -> Path:
+    """Return a fake save path relative to the fixtures directory."""
+    return (
+        Path(__file__).parent
+        / "fixtures"
+        / ".revlo"
+        / "STM32F103CBT8_Devel-review-20260212T000000.json"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test _build_parser
 # ---------------------------------------------------------------------------
@@ -127,9 +139,28 @@ def test_build_parser_with_no_tui_flag():
     assert args.no_tui is True
 
 
+def test_build_parser_creates_open_subcommand():
+    """Test that _build_parser creates an open subcommand."""
+    parser = _build_parser()
+    args = parser.parse_args(["open", "test.kicad_sch"])
+    assert args.command == "open"
+    assert args.path == "test.kicad_sch"
+    assert args.json_output is False
+    assert args.no_tui is False
+
+
+def test_build_parser_open_with_flags():
+    """Test open subcommand with --json and --no-tui flags."""
+    parser = _build_parser()
+    args = parser.parse_args(["open", "test.kicad_sch", "--json", "--no-tui"])
+    assert args.json_output is True
+    assert args.no_tui is True
+
+
 # ---------------------------------------------------------------------------
 # Test _run_review success path
 # ---------------------------------------------------------------------------
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -138,6 +169,7 @@ def test_run_review_success_markdown(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -163,12 +195,14 @@ def test_run_review_success_markdown(
     assert "ERROR" in captured.err or "U1" in captured.err
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 def test_run_review_success_json(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -193,6 +227,7 @@ def test_run_review_success_json(
     assert "summary" in captured.out
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -201,6 +236,7 @@ def test_run_review_success_output_file(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -235,12 +271,14 @@ def test_run_review_success_output_file(
     assert captured.out == ""
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 def test_run_review_success_json_to_file(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -273,6 +311,7 @@ def test_run_review_success_json_to_file(
 # ---------------------------------------------------------------------------
 # Test Rich progress output (US-026)
 # ---------------------------------------------------------------------------
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -281,6 +320,7 @@ def test_run_review_rich_progress_on_stderr(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -301,21 +341,22 @@ def test_run_review_rich_progress_on_stderr(
     # Rich progress goes to stderr
     assert "Revlo Review" in captured.err
     assert "Parsing schematic" in captured.err
-    assert "Running review" in captured.err
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 def test_run_review_json_suppresses_rich(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
     capsys,
 ):
-    """Test that --json flag suppresses all Rich output."""
+    """Test that --json flag (to stdout) suppresses all Rich output."""
     mock_parse.return_value = mock_parsed_schematic
     mock_review.return_value = mock_review_report
 
@@ -335,12 +376,14 @@ def test_run_review_json_suppresses_rich(
     assert "Parsing schematic" not in captured.err
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 def test_run_review_no_tui_prints_cards(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -369,6 +412,7 @@ def test_run_review_no_tui_prints_cards(
     assert "1 errors" in captured.err
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -377,6 +421,7 @@ def test_run_review_output_file_with_rich_progress(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -410,12 +455,14 @@ def test_run_review_output_file_with_rich_progress(
     assert "Parsing schematic" in captured.err
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 def test_run_review_summary_line_severity_counts(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     fixture_path: str,
     capsys,
 ):
@@ -466,7 +513,7 @@ def test_run_review_summary_line_severity_counts(
         mock_asyncio_run.return_value = report
         with patch("revlo.cli.generate_markdown_report", return_value="# Report\n"):
             args = _build_parser().parse_args(
-                ["review", fixture_path, "--skip-datasheet"]
+                ["review", fixture_path, "--skip-datasheet", "--no-tui"]
             )
             _run_review(args)
 
@@ -474,6 +521,116 @@ def test_run_review_summary_line_severity_counts(
     assert "1 errors" in captured.err
     assert "1 warnings" in captured.err
     assert "1 suggestions" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Test --json --no-tui priority fix
+# ---------------------------------------------------------------------------
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_run_review_json_no_tui_produces_json(
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_save: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    capsys,
+):
+    """Test --json --no-tui produces JSON output (--json takes priority)."""
+    mock_parse.return_value = mock_parsed_schematic
+    mock_review.return_value = mock_review_report
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+
+        args = _build_parser().parse_args(
+            ["review", fixture_path, "--json", "--no-tui", "--skip-datasheet"]
+        )
+        _run_review(args)
+
+    captured = capsys.readouterr()
+    # JSON output on stdout
+    data = json.loads(captured.out)
+    assert "findings" in data
+    assert "summary" in data
+
+
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_run_review_json_output_file_shows_rich(
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_save: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    tmp_path: Path,
+    capsys,
+):
+    """Test --json --output writes JSON to file AND shows rich on stderr."""
+    mock_parse.return_value = mock_parsed_schematic
+    mock_review.return_value = mock_review_report
+
+    output_file = tmp_path / "report.json"
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+
+        args = _build_parser().parse_args(
+            [
+                "review", fixture_path,
+                "--json", "--output", str(output_file),
+                "--skip-datasheet",
+            ]
+        )
+        _run_review(args)
+
+    # JSON file written
+    assert output_file.exists()
+    data = json.loads(output_file.read_text())
+    assert "findings" in data
+
+    captured = capsys.readouterr()
+    # Nothing on stdout (JSON went to file)
+    assert captured.out == ""
+    # Rich progress on stderr since JSON goes to file, not stdout
+    assert "Revlo Review" in captured.err
+    assert "Parsing schematic" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Test auto-save
+# ---------------------------------------------------------------------------
+@patch("revlo.storage.save_review")
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_run_review_auto_saves(
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_save: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+):
+    """Test that _run_review auto-saves the review to storage."""
+    mock_parse.return_value = mock_parsed_schematic
+    mock_save.return_value = Path("/tmp/fake/.revlo/test-review-20260212T000000.json")
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+
+        args = _build_parser().parse_args(
+            ["review", fixture_path, "--no-tui", "--skip-datasheet"]
+        )
+        _run_review(args)
+
+    mock_save.assert_called_once_with(mock_review_report, fixture_path)
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +828,7 @@ def test_run_review_review_error(
     mock_parse.assert_called_once_with(fixture_path)
 
 
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
@@ -679,6 +837,7 @@ def test_run_review_output_write_error(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
     mock_parse: MagicMock,
+    mock_save: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -703,6 +862,80 @@ def test_run_review_output_write_error(
 
 
 # ---------------------------------------------------------------------------
+# Test _run_open
+# ---------------------------------------------------------------------------
+def test_run_open_file_not_found():
+    """Test _run_open exits when schematic file does not exist."""
+    args = _build_parser().parse_args(["open", "nonexistent.kicad_sch"])
+    with pytest.raises(SystemExit) as exc:
+        _run_open(args)
+    assert exc.value.code == 1
+
+
+@patch("revlo.storage.load_latest_review", return_value=None)
+def test_run_open_no_review_found(
+    mock_load: MagicMock,
+    fixture_path: str,
+    capsys,
+):
+    """Test _run_open exits when no review exists for the schematic."""
+    args = _build_parser().parse_args(["open", fixture_path])
+    with pytest.raises(SystemExit) as exc:
+        _run_open(args)
+    assert exc.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "No review found" in captured.err
+
+
+@patch("revlo.storage.load_latest_review")
+def test_run_open_no_tui(
+    mock_load: MagicMock,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    capsys,
+):
+    """Test _run_open with --no-tui prints finding cards."""
+    mock_load.return_value = (
+        mock_review_report,
+        {"schematic": "test.kicad_sch", "saved_at": "2026-02-12T00:00:00+00:00"},
+    )
+
+    args = _build_parser().parse_args(["open", fixture_path, "--no-tui"])
+    _run_open(args)
+
+    captured = capsys.readouterr()
+    # Header and summary on stderr
+    assert "Revlo Review" in captured.err
+    assert "Loaded review" in captured.err
+    # Finding cards on stderr
+    assert "ERROR" in captured.err
+    assert "U1" in captured.err
+
+
+@patch("revlo.storage.load_latest_review")
+def test_run_open_json(
+    mock_load: MagicMock,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    capsys,
+):
+    """Test _run_open with --json outputs JSON to stdout."""
+    mock_load.return_value = (
+        mock_review_report,
+        {"schematic": "test.kicad_sch", "saved_at": "2026-02-12T00:00:00+00:00"},
+    )
+
+    args = _build_parser().parse_args(["open", fixture_path, "--json"])
+    _run_open(args)
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert "findings" in data
+    assert "summary" in data
+
+
+# ---------------------------------------------------------------------------
 # Test main() entry point
 # ---------------------------------------------------------------------------
 @patch("revlo.cli._run_review")
@@ -712,6 +945,14 @@ def test_main_with_review_subcommand(mock_run_review: MagicMock, fixture_path: s
     with patch("sys.argv", ["revlo", "review", fixture_path]):
         main()
     mock_run_review.assert_called_once()
+
+
+@patch("revlo.cli._run_open")
+def test_main_with_open_subcommand(mock_run_open: MagicMock, fixture_path: str):
+    """Test main() calls _run_open when open subcommand is provided."""
+    with patch("sys.argv", ["revlo", "open", fixture_path]):
+        main()
+    mock_run_open.assert_called_once()
 
 
 def test_main_no_subcommand():
