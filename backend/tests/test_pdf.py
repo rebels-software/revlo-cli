@@ -8,7 +8,13 @@ import httpx
 import pymupdf
 import pytest
 
-from revlo.datasheet.pdf import download_pdf, extract_text
+from revlo.datasheet.pdf import (
+    _PDF_TEXT_LIMIT,
+    _select_pages_by_keyword_scan,
+    _select_pages_from_bookmarks,
+    download_pdf,
+    extract_text,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +28,37 @@ def _create_test_pdf(path: Path, num_pages: int = 1, text_per_page: str = "Test 
     for i in range(num_pages):
         page = doc.new_page(width=595, height=842)  # A4 size
         page.insert_text((72, 72), f"{text_per_page} - Page {i + 1}")
+    doc.save(str(path))
+    doc.close()
+
+
+def _create_large_pdf_with_bookmarks(
+    path: Path,
+    num_pages: int = 50,
+    bookmarks: list[tuple[int, str, int]] | None = None,
+    page_texts: dict[int, str] | None = None,
+) -> None:
+    """Create a large synthetic PDF with bookmarks (TOC) and custom page text.
+
+    Args:
+        path: Output file path.
+        num_pages: Total number of pages.
+        bookmarks: List of (level, title, 1-based page_num) TOC entries.
+        page_texts: Dict mapping 0-based page index to custom text.
+                    Pages not in the dict get generic filler text.
+    """
+    doc = pymupdf.open()
+    page_texts = page_texts or {}
+
+    for i in range(num_pages):
+        page = doc.new_page(width=595, height=842)
+        text = page_texts.get(i, f"Generic filler content - Page {i + 1}")
+        page.insert_text((72, 72), text)
+
+    if bookmarks:
+        toc = [[lvl, title, pg] for lvl, title, pg in bookmarks]
+        doc.set_toc(toc)
+
     doc.save(str(path))
     doc.close()
 
@@ -387,15 +424,15 @@ class TestExtractText:
         assert result.count("Sample") == 3
 
     def test_extract_text_default_max_pages_is_30(self, tmp_path):
-        """extract_text uses max_pages=30 by default."""
-        pdf_path = tmp_path / "large.pdf"
-        _create_test_pdf(pdf_path, num_pages=35, text_per_page="Text")
+        """extract_text reads all pages for PDFs with <= max_pages (small PDF path)."""
+        pdf_path = tmp_path / "medium.pdf"
+        _create_test_pdf(pdf_path, num_pages=30, text_per_page="Text")
 
         result = extract_text(pdf_path)
 
-        # Should have 30 pages
+        # All 30 pages should be read (small-PDF path)
         assert "Page 30" in result
-        assert "Page 31" not in result
+        assert "Page 1" in result
 
     def test_extract_text_returns_empty_string_for_nonexistent_file(self, tmp_path):
         """extract_text returns empty string for files that don't exist."""
@@ -438,3 +475,452 @@ class TestExtractText:
 
         # PDF with no text should return empty string
         assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# _select_pages_from_bookmarks unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestSelectPagesFromBookmarks:
+    """Unit tests for the bookmark-based page selector."""
+
+    def test_returns_none_when_toc_is_empty(self):
+        result = _select_pages_from_bookmarks([], total_pages=50)
+        assert result is None
+
+    def test_returns_none_when_no_matching_bookmarks(self):
+        toc = [
+            [1, "Introduction", 1],
+            [1, "Ordering Information", 10],
+            [1, "Package Dimensions", 40],
+        ]
+        result = _select_pages_from_bookmarks(toc, total_pages=50)
+        assert result is None
+
+    def test_matches_absolute_maximum_bookmark(self):
+        toc = [
+            [1, "Introduction", 1],
+            [1, "Absolute Maximum Ratings", 20],
+            [1, "Ordering Information", 25],
+        ]
+        result = _select_pages_from_bookmarks(toc, total_pages=50)
+        assert result is not None
+        # Pages 19..24 (0-based), i.e. section from page 20 to before page 25
+        assert result == list(range(19, 24))
+
+    def test_matches_electrical_characteristics(self):
+        toc = [
+            [1, "Features", 1],
+            [1, "Electrical Characteristics", 15],
+            [1, "Packaging", 20],
+        ]
+        result = _select_pages_from_bookmarks(toc, total_pages=50)
+        assert result is not None
+        assert result == list(range(14, 19))
+
+    def test_matches_pin_description_variants(self):
+        for title in ["Pin Description", "Pin Functions", "Pin Definition Table"]:
+            toc = [
+                [1, "Overview", 1],
+                [1, title, 8],
+                [1, "Applications", 12],
+            ]
+            result = _select_pages_from_bookmarks(toc, total_pages=50)
+            assert result is not None, f"Failed to match: {title}"
+            assert result == list(range(7, 11))
+
+    def test_matches_recommended_operating_conditions(self):
+        toc = [
+            [1, "Features", 1],
+            [1, "Recommended Operating Conditions", 10],
+            [1, "Absolute Maximum Ratings", 13],
+        ]
+        result = _select_pages_from_bookmarks(toc, total_pages=50)
+        assert result is not None
+        # Both sections match; recommended: pages 9..12, abs max: pages 12..49
+        assert 9 in result  # recommended operating
+        assert 12 in result  # absolute maximum
+
+    def test_last_matching_bookmark_extends_to_end(self):
+        toc = [
+            [1, "Introduction", 1],
+            [1, "Electrical Characteristics", 40],
+        ]
+        result = _select_pages_from_bookmarks(toc, total_pages=50)
+        assert result is not None
+        # Section extends from page 40 (0-based 39) to end (page 50, 0-based 49)
+        assert result == list(range(39, 50))
+
+    def test_nested_bookmarks_respect_level(self):
+        """Sub-section bookmarks (higher level) do NOT end the parent section."""
+        toc = [
+            [1, "Electrical Characteristics", 10],
+            [2, "DC Characteristics", 11],  # child — doesn't end section
+            [2, "AC Characteristics", 14],  # child — doesn't end section
+            [1, "Package Information", 20],  # same level — ends section
+        ]
+        result = _select_pages_from_bookmarks(toc, total_pages=50)
+        assert result is not None
+        # Section runs from page 10 (0-based 9) to page 20 (0-based 19 exclusive)
+        assert result == list(range(9, 19))
+
+    def test_case_insensitive_matching(self):
+        toc = [
+            [1, "ABSOLUTE MAXIMUM RATINGS", 5],
+            [1, "Next Section", 10],
+        ]
+        result = _select_pages_from_bookmarks(toc, total_pages=50)
+        assert result is not None
+        assert result == list(range(4, 9))
+
+
+# ---------------------------------------------------------------------------
+# _select_pages_by_keyword_scan unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestSelectPagesByKeywordScan:
+    """Unit tests for the keyword-scanning fallback."""
+
+    def test_finds_pages_with_target_keywords(self, tmp_path):
+        pdf_path = tmp_path / "keyword_test.pdf"
+        page_texts = {
+            0: "Product overview and features",
+            5: "Absolute maximum ratings: VCC 7V",
+            10: "Electrical characteristics table",
+            20: "Package dimensions",
+        }
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=30, page_texts=page_texts
+        )
+        doc = pymupdf.open(str(pdf_path))
+        result = _select_pages_by_keyword_scan(doc)
+        doc.close()
+
+        assert 5 in result   # "absolute maximum"
+        assert 10 in result  # "electrical characteristics"
+        assert 20 not in result  # no keywords
+
+    def test_returns_empty_when_no_keywords_found(self, tmp_path):
+        pdf_path = tmp_path / "no_keywords.pdf"
+        _create_test_pdf(pdf_path, num_pages=5, text_per_page="Generic content")
+        doc = pymupdf.open(str(pdf_path))
+        result = _select_pages_by_keyword_scan(doc)
+        doc.close()
+
+        assert result == []
+
+    def test_finds_recommended_operating_keyword(self, tmp_path):
+        pdf_path = tmp_path / "rec_op.pdf"
+        page_texts = {3: "Recommended operating conditions: 3.0V to 3.6V"}
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=10, page_texts=page_texts
+        )
+        doc = pymupdf.open(str(pdf_path))
+        result = _select_pages_by_keyword_scan(doc)
+        doc.close()
+
+        assert 3 in result
+
+    def test_finds_pin_function_keyword(self, tmp_path):
+        pdf_path = tmp_path / "pin_fn.pdf"
+        page_texts = {7: "Pin function table: PA0 is GPIO input"}
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=10, page_texts=page_texts
+        )
+        doc = pymupdf.open(str(pdf_path))
+        result = _select_pages_by_keyword_scan(doc)
+        doc.close()
+
+        assert 7 in result
+
+
+# ---------------------------------------------------------------------------
+# Smart page selection integration tests (extract_text on large PDFs)
+# ---------------------------------------------------------------------------
+
+
+class TestSmartPageSelection:
+    """Integration tests for smart page selection in extract_text."""
+
+    def test_small_pdf_unchanged_behavior(self, tmp_path):
+        """PDFs with <= max_pages use the original sequential read."""
+        pdf_path = tmp_path / "small.pdf"
+        _create_test_pdf(pdf_path, num_pages=25, text_per_page="SmallPDF")
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        # All 25 pages should be present
+        for i in range(1, 26):
+            assert f"Page {i}" in result
+
+    def test_large_pdf_with_bookmarks_selects_target_sections(self, tmp_path):
+        """Large PDF with bookmarks: only target sections + first 3 pages extracted."""
+        pdf_path = tmp_path / "datasheet.pdf"
+        page_texts = {
+            0: "STM32F103 Overview - Page 1",
+            1: "Features summary - Page 2",
+            2: "Block diagram - Page 3",
+            19: "Absolute maximum ratings VCC=4.0V - Page 20",
+            20: "Continued absolute max - Page 21",
+            29: "Electrical characteristics DC - Page 30",
+            30: "Electrical characteristics AC - Page 31",
+            31: "Electrical characteristics timing - Page 32",
+            39: "Package dimensions - Page 40",
+        }
+        bookmarks = [
+            [1, "Overview", 1],
+            [1, "Absolute Maximum Ratings", 20],
+            [1, "Electrical Characteristics", 30],
+            [1, "Package Information", 40],
+            [1, "Ordering", 48],
+        ]
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        # First 3 pages always included
+        assert "Overview - Page 1" in result
+        assert "Features summary - Page 2" in result
+        assert "Block diagram - Page 3" in result
+
+        # Absolute max section (pages 20-29, 0-based 19-28)
+        assert "Absolute maximum ratings VCC=4.0V" in result
+
+        # Electrical characteristics section (pages 30-39, 0-based 29-38)
+        assert "Electrical characteristics DC" in result
+        assert "Electrical characteristics AC" in result
+
+        # Package info section should NOT be included (no matching bookmark)
+        assert "Package dimensions" not in result
+
+    def test_large_pdf_keyword_fallback_when_no_bookmarks(self, tmp_path):
+        """Large PDF without bookmarks falls back to keyword scanning."""
+        pdf_path = tmp_path / "no_bookmarks.pdf"
+        page_texts = {
+            0: "Product Overview - Page 1",
+            1: "Features - Page 2",
+            2: "Pinout - Page 3",
+            15: "Absolute maximum ratings table",
+            25: "Electrical characteristics data",
+            35: "Package outline drawing",
+        }
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=50, bookmarks=None, page_texts=page_texts
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        # First 3 pages always included
+        assert "Product Overview" in result
+        assert "Features" in result
+        assert "Pinout" in result
+
+        # Keyword-matched pages
+        assert "Absolute maximum ratings table" in result
+        assert "Electrical characteristics data" in result
+
+        # Non-matching pages excluded
+        assert "Package outline drawing" not in result
+
+    def test_large_pdf_keyword_fallback_when_bookmarks_dont_match(self, tmp_path):
+        """Bookmarks present but none match target patterns -> keyword fallback."""
+        pdf_path = tmp_path / "unrelated_bookmarks.pdf"
+        page_texts = {
+            10: "Absolute maximum ratings: do not exceed",
+            20: "Electrical characteristics summary",
+        }
+        bookmarks = [
+            [1, "Introduction", 1],
+            [1, "Application Notes", 15],
+            [1, "Ordering", 40],
+        ]
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        # Keywords found via scan
+        assert "Absolute maximum ratings" in result
+        assert "Electrical characteristics summary" in result
+
+    def test_first_three_pages_always_included(self, tmp_path):
+        """First 3 pages are always included regardless of method."""
+        pdf_path = tmp_path / "first3.pdf"
+        page_texts = {
+            0: "UNIQUE_OVERVIEW_TEXT",
+            1: "UNIQUE_FEATURES_TEXT",
+            2: "UNIQUE_PINOUT_TEXT",
+        }
+        # Only bookmark on page 40
+        bookmarks = [
+            [1, "Electrical Characteristics", 40],
+            [1, "Ordering", 48],
+        ]
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        assert "UNIQUE_OVERVIEW_TEXT" in result
+        assert "UNIQUE_FEATURES_TEXT" in result
+        assert "UNIQUE_PINOUT_TEXT" in result
+
+    def test_text_limit_cap(self, tmp_path):
+        """Total extracted text is capped at _PDF_TEXT_LIMIT characters."""
+        pdf_path = tmp_path / "huge_text.pdf"
+        # Create pages with lots of text so total exceeds limit
+        big_text = "X" * 5000  # 5K chars per page
+        page_texts = {i: f"{big_text} - Page {i + 1}" for i in range(50)}
+        # Mark many pages as electrical characteristics to select them all
+        for i in range(5, 50):
+            page_texts[i] = f"Electrical characteristics {big_text} - Page {i + 1}"
+
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=50, page_texts=page_texts
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        assert len(result) <= _PDF_TEXT_LIMIT + 1000  # small margin for newlines
+
+    def test_deduplication_of_page_indices(self, tmp_path):
+        """Pages in both always-include set and bookmark set are only extracted once."""
+        pdf_path = tmp_path / "dedup.pdf"
+        page_texts = {
+            0: "FIRST_PAGE_UNIQUE",
+            1: "SECOND_PAGE_UNIQUE",
+            2: "THIRD_PAGE_UNIQUE",
+        }
+        # Bookmark starts at page 1 (0-based 0) — overlaps with always-include
+        bookmarks = [
+            [1, "Absolute Maximum Ratings", 1],
+            [1, "Next Section", 5],
+        ]
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        # Page 1 text should appear exactly once, not duplicated
+        assert result.count("FIRST_PAGE_UNIQUE") == 1
+
+    def test_large_pdf_with_pin_description_bookmark(self, tmp_path):
+        """Pin description/function bookmarks are matched."""
+        pdf_path = tmp_path / "pin_desc.pdf"
+        page_texts = {
+            7: "Pin Description table: PA0 GPIO, PA1 USART",
+            8: "Pin Description continued: PB0 SPI",
+        }
+        bookmarks = [
+            [1, "Overview", 1],
+            [1, "Pin Description", 8],
+            [1, "Electrical Characteristics", 15],
+            [1, "Package", 40],
+        ]
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        assert "Pin Description table: PA0 GPIO" in result
+        assert "Pin Description continued: PB0 SPI" in result
+
+    def test_large_pdf_recommended_operating_bookmark(self, tmp_path):
+        """Recommended operating conditions bookmark is matched."""
+        pdf_path = tmp_path / "rec_op.pdf"
+        page_texts = {
+            9: "Recommended operating conditions: VCC 3.0V to 3.6V",
+        }
+        bookmarks = [
+            [1, "Overview", 1],
+            [1, "Recommended Operating Conditions", 10],
+            [1, "Absolute Maximum Ratings", 15],
+            [1, "Package", 40],
+        ]
+        _create_large_pdf_with_bookmarks(
+            pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        assert "Recommended operating conditions: VCC 3.0V" in result
+
+    def test_electrical_characteristics_pages_included_synthetic_stm32(self, tmp_path):
+        """Synthetic STM32-style datasheet: electrical characteristics pages extracted."""
+        pdf_path = tmp_path / "stm32_synthetic.pdf"
+
+        # Simulate a realistic 100-page STM32 datasheet layout
+        page_texts = {
+            0: "STM32F103xx Medium-density performance line ARM-based 32-bit MCU",
+            1: "Features: ARM 32-bit Cortex-M3 CPU, 72 MHz max, 128KB Flash, 20KB SRAM",
+            2: "Block diagram and pinout",
+            9: "Pin description: PA0-WKUP/USART2_CTS/ADC12_IN0/TIM2_CH1_ETR",
+            10: "Pin description continued",
+            25: "Absolute maximum ratings: VDDA = 4.0V, VDD = 4.0V",
+            26: "Absolute maximum ratings continued",
+            30: "General operating conditions",
+            35: "Electrical characteristics: DC characteristics",
+            36: "Electrical characteristics: ADC characteristics",
+            37: "Electrical characteristics: DAC characteristics",
+            38: "Electrical characteristics: Timer characteristics",
+            50: "Recommended operating conditions: VDD 2.0V to 3.6V, TA -40 to 85",
+            51: "Recommended operating conditions continued",
+            80: "Package information and ordering codes",
+        }
+
+        bookmarks = [
+            [1, "Description", 1],
+            [1, "Features", 2],
+            [1, "Pinout", 3],
+            [1, "Pin Description", 10],
+            [2, "Port A", 10],
+            [2, "Port B", 11],
+            [1, "Absolute Maximum Ratings", 26],
+            [1, "General Operating Conditions", 31],
+            [1, "Electrical Characteristics", 36],
+            [2, "DC Characteristics", 36],
+            [2, "ADC Characteristics", 37],
+            [2, "DAC Characteristics", 38],
+            [2, "Timer Characteristics", 39],
+            [1, "Recommended Operating Conditions", 51],
+            [1, "Package Information", 60],
+            [1, "Ordering Codes", 90],
+        ]
+
+        _create_large_pdf_with_bookmarks(
+            pdf_path,
+            num_pages=100,
+            bookmarks=bookmarks,
+            page_texts=page_texts,
+        )
+
+        result = extract_text(pdf_path, max_pages=30)
+
+        # First 3 pages (overview/features)
+        assert "STM32F103xx" in result
+        assert "ARM 32-bit Cortex-M3" in result
+        assert "Block diagram" in result
+
+        # Pin description section (pages 10-25, 0-based 9-24)
+        assert "Pin description" in result
+
+        # Absolute maximum ratings (pages 26-30, 0-based 25-29)
+        assert "Absolute maximum ratings" in result
+
+        # Electrical characteristics (pages 36-50, 0-based 35-49)
+        assert "DC characteristics" in result
+        assert "ADC characteristics" in result
+
+        # Recommended operating conditions (pages 51-59, 0-based 50-58)
+        assert "Recommended operating conditions" in result
+
+        # Package info should NOT be included
+        assert "Package information and ordering codes" not in result

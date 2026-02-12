@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -19,6 +20,26 @@ _MAX_PDF_SIZE = 200 * 1024 * 1024  # 200 MB
 _CONNECT_TIMEOUT = 10.0  # seconds
 _READ_TIMEOUT = 60.0  # seconds
 _USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+_PDF_TEXT_LIMIT = 100_000  # Max characters of extracted text
+
+# Target section patterns for smart page selection (case-insensitive)
+_BOOKMARK_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"absolute maximum", re.IGNORECASE),
+    re.compile(r"electrical characteristics", re.IGNORECASE),
+    re.compile(r"pin\s+(description|function|definition)", re.IGNORECASE),
+    re.compile(r"recommended operating", re.IGNORECASE),
+]
+
+# Keywords for fallback full-page scan (case-insensitive substrings)
+_SCAN_KEYWORDS: list[str] = [
+    "absolute maximum",
+    "electrical characteristics",
+    "pin function",
+    "recommended operating",
+]
+
+# Number of leading pages always included (features / overview)
+_ALWAYS_INCLUDE_PAGES = 3
 
 
 def _sha256(path: Path) -> str:
@@ -141,6 +162,63 @@ async def download_pdf(url: str, cache_dir: Path) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
+# Smart page selection helpers
+# ---------------------------------------------------------------------------
+
+
+def _select_pages_from_bookmarks(
+    toc: list[list], total_pages: int
+) -> list[int] | None:
+    """Return page indices for target sections found via PDF bookmarks.
+
+    *toc* is the list returned by ``doc.get_toc()`` — each entry is
+    ``[level, title, page_number]`` where *page_number* is 1-based.
+
+    Returns a sorted, deduplicated list of 0-based page indices, or
+    ``None`` if no matching bookmarks were found.
+    """
+    if not toc:
+        return None
+
+    matched_pages: set[int] = set()
+
+    for idx, entry in enumerate(toc):
+        _level, title, page_num = entry[:3]
+        if not any(pat.search(title) for pat in _BOOKMARK_PATTERNS):
+            continue
+
+        start = page_num - 1  # convert to 0-based
+
+        # Section extends to the next bookmark at the same or higher level,
+        # or to end of document.
+        end = total_pages
+        for future in toc[idx + 1 :]:
+            if future[0] <= _level:
+                end = future[2] - 1  # 0-based exclusive
+                break
+
+        matched_pages.update(range(start, end))
+
+    if not matched_pages:
+        return None
+
+    return sorted(matched_pages)
+
+
+def _select_pages_by_keyword_scan(doc: pymupdf.Document) -> list[int]:
+    """Scan every page for target keywords and return matching 0-based indices."""
+    matched: set[int] = set()
+    for i in range(len(doc)):
+        try:
+            text = doc[i].get_text().lower()
+        except Exception:
+            continue
+        if any(kw in text for kw in _SCAN_KEYWORDS):
+            matched.add(i)
+    return sorted(matched)
+
+
+# ---------------------------------------------------------------------------
 # extract_text
 # ---------------------------------------------------------------------------
 
@@ -148,7 +226,19 @@ async def download_pdf(url: str, cache_dir: Path) -> Path | None:
 def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
     """Extract text from a PDF using PyMuPDF.
 
-    Reads at most *max_pages* pages and returns the concatenated text.
+    For **small PDFs** (<= *max_pages* pages) the behaviour is unchanged:
+    reads every page sequentially.
+
+    For **large PDFs** (> *max_pages* pages) smart page selection kicks in:
+
+    1. Try bookmarks first — look for target section titles
+       (absolute maximum ratings, electrical characteristics, etc.) and
+       extract the full section (bookmark page to next bookmark).
+    2. Fallback — scan all pages for target keywords and extract matching
+       pages.
+    3. The first ``_ALWAYS_INCLUDE_PAGES`` pages are always included.
+
+    Total output is capped at ``_PDF_TEXT_LIMIT`` characters.
     Returns an empty string on any error.
     """
     try:
@@ -157,19 +247,74 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
         logger.warning("Failed to open PDF %s: %s", pdf_path, exc)
         return ""
 
-    pages_to_read = min(len(doc), max_pages)
-    parts: list[str] = []
+    total_pages = len(doc)
 
     try:
-        for i in range(pages_to_read):
+        # --- Small PDF: preserve original behaviour -------------------------
+        if total_pages <= max_pages:
+            parts: list[str] = []
+            for i in range(total_pages):
+                try:
+                    text = doc[i].get_text()
+                    if text:
+                        parts.append(text)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to extract page %d from %s: %s", i, pdf_path, exc
+                    )
+            return "\n".join(parts)
+
+        # --- Large PDF: smart page selection --------------------------------
+        # Always include the first N pages.
+        selected: set[int] = set(
+            range(min(_ALWAYS_INCLUDE_PAGES, total_pages))
+        )
+
+        # Try bookmark-based selection first.
+        toc = doc.get_toc()
+        bookmark_pages = _select_pages_from_bookmarks(toc, total_pages)
+
+        if bookmark_pages is not None:
+            selected.update(bookmark_pages)
+            logger.info(
+                "Bookmark selection for %s: %d target pages (+ %d overview)",
+                pdf_path.name,
+                len(bookmark_pages),
+                _ALWAYS_INCLUDE_PAGES,
+            )
+        else:
+            # Fallback: keyword scan.
+            keyword_pages = _select_pages_by_keyword_scan(doc)
+            selected.update(keyword_pages)
+            logger.info(
+                "Keyword scan for %s: %d matching pages (+ %d overview)",
+                pdf_path.name,
+                len(keyword_pages),
+                _ALWAYS_INCLUDE_PAGES,
+            )
+
+        # Extract text from selected pages (sorted, deduplicated).
+        parts = []
+        char_count = 0
+        for i in sorted(selected):
+            if i >= total_pages:
+                continue
             try:
-                page = doc[i]
-                text = page.get_text()
+                text = doc[i].get_text()
                 if text:
+                    if char_count + len(text) > _PDF_TEXT_LIMIT:
+                        # Take as much of this page as fits.
+                        remaining = _PDF_TEXT_LIMIT - char_count
+                        if remaining > 0:
+                            parts.append(text[:remaining])
+                        break
                     parts.append(text)
+                    char_count += len(text)
             except Exception as exc:
-                logger.warning("Failed to extract page %d from %s: %s", i, pdf_path, exc)
+                logger.warning(
+                    "Failed to extract page %d from %s: %s", i, pdf_path, exc
+                )
+
+        return "\n".join(parts)
     finally:
         doc.close()
-
-    return "\n".join(parts)
