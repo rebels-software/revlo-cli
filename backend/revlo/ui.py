@@ -22,22 +22,8 @@ AMBER = "#FFB347"  # Warm Amber     -- warnings
 def print_header(console: Console) -> None:
     """Print the branded ASCII art header."""
     console.print()
-    console.print(
-        f"  [bold {TEAL}]╦═╗ ╔═╗[/]"
-        f" [bold #E8ECF1]╦  ╦[/]"
-        f" [bold {AMBER}]╦   ╔═╗[/]"
-    )
-    console.print(
-        f"  [bold {TEAL}]╠╦╝ ║╣ [/]"
-        f" [bold #E8ECF1]╚╗╔╝[/]"
-        f" [bold {AMBER}]║   ║ ║[/]"
-    )
-    console.print(
-        f"  [bold {TEAL}]╩╚═ ╚═╝[/]"
-        f" [bold #E8ECF1] ╚╝ [/]"
-        f" [bold {AMBER}]╩═╝ ╚═╝[/]"
-    )
-    console.print("  [dim]AI-powered hardware review[/]")
+    console.print(f"  [bold {TEAL}]◆ Revlo[/]")
+    console.print("  [dim]AI-powered design review for KiCad schematics[/]")
     console.print()
 
 
