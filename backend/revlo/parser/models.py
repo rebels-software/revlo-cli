@@ -28,6 +28,7 @@ class ParsedComponent(BaseModel):
     rotation: float = 0.0
     pins: list[ParsedPin] = Field(default_factory=list)
     properties: dict[str, str] = Field(default_factory=dict)
+    source_sheet: str = ""
 
 
 class ParsedNet(BaseModel):

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import kicad_sch_api as ksa
 
-from revlo.parser.connectivity import build_net_list
+from revlo.parser.connectivity import build_merged_net_list
 from revlo.parser.models import (
     ParsedComponent,
     ParsedPin,
@@ -59,11 +59,15 @@ def _detect_unsupported_format(sch_path: Path) -> None:
 def parse_schematic(path: str) -> ParsedSchematic:
     """Parse a KiCad schematic file into a structured ParsedSchematic model.
 
+    Recursively discovers and loads hierarchical sub-sheets so that all
+    components in a KiCad project are visible to the review engine.
+
     Args:
         path: Filesystem path to a .kicad_sch file.
 
     Returns:
-        A fully populated ParsedSchematic instance.
+        A fully populated ParsedSchematic instance with components from all
+        sheets flattened into a single list.
 
     Raises:
         FileNotFoundError: If the schematic file does not exist.
@@ -80,17 +84,105 @@ def parse_schematic(path: str) -> ParsedSchematic:
 
     title_block = _extract_title_block(sch)
     components, power_symbols = _extract_components(sch)
-    nets, unconnected_pins = build_net_list(sch, components + power_symbols)
     sheets = _extract_sheets(sch)
 
+    # Collect (schematic, components) pairs for merged net building.
+    # Start with root sheet.
+    sheet_pairs: list[tuple[ksa.Schematic, list[ParsedComponent]]] = [
+        (sch, components + power_symbols),
+    ]
+
+    # Recursively load sub-sheets.
+    visited: set[str] = {str(sch_path.resolve())}
+    all_components = list(components)
+    all_power_symbols = list(power_symbols)
+
+    _load_sub_sheets(
+        parent_dir=sch_path.parent,
+        sheets=sheets,
+        all_components=all_components,
+        all_power_symbols=all_power_symbols,
+        sheet_pairs=sheet_pairs,
+        visited=visited,
+    )
+
+    # Build merged nets across all sheets.
+    nets, unconnected_pins = build_merged_net_list(sheet_pairs)
+
     return ParsedSchematic(
-        components=components,
+        components=all_components,
         nets=nets,
-        power_symbols=power_symbols,
+        power_symbols=all_power_symbols,
         sheets=sheets,
         unconnected_pins=unconnected_pins,
         title_block=title_block,
     )
+
+
+def _load_sub_sheets(
+    parent_dir: Path,
+    sheets: list[ParsedSheet],
+    all_components: list[ParsedComponent],
+    all_power_symbols: list[ParsedComponent],
+    sheet_pairs: list[tuple[ksa.Schematic, list[ParsedComponent]]],
+    visited: set[str],
+) -> None:
+    """Recursively load hierarchical sub-sheets and collect their components.
+
+    Args:
+        parent_dir: Directory of the parent schematic (for relative path resolution).
+        sheets: Parsed sheet metadata from the parent schematic.
+        all_components: Accumulator for regular components across all sheets.
+        all_power_symbols: Accumulator for power symbols across all sheets.
+        sheet_pairs: Accumulator of (schematic, all_components) pairs for net merging.
+        visited: Set of resolved absolute paths already visited (cycle detection).
+    """
+    for sheet in sheets:
+        sub_path = parent_dir / sheet.filename
+        resolved = str(sub_path.resolve())
+
+        # Cycle detection: skip if already visited.
+        if resolved in visited:
+            logger.debug(
+                "Skipping already-visited sub-sheet: %s", sheet.filename,
+            )
+            continue
+
+        if not sub_path.is_file():
+            logger.warning(
+                "Sub-sheet file not found, skipping: %s", sub_path,
+            )
+            continue
+
+        visited.add(resolved)
+
+        try:
+            sub_sch = ksa.Schematic.load(str(sub_path))
+        except Exception:
+            logger.warning(
+                "Failed to load sub-sheet, skipping: %s", sub_path,
+                exc_info=True,
+            )
+            continue
+
+        sub_components, sub_power = _extract_components(
+            sub_sch, source_sheet=sheet.name,
+        )
+        all_components.extend(sub_components)
+        all_power_symbols.extend(sub_power)
+        sheet_pairs.append((sub_sch, sub_components + sub_power))
+
+        # Recurse into sub-sub-sheets.
+        sub_sheets = _extract_sheets(sub_sch)
+        if sub_sheets:
+            _load_sub_sheets(
+                parent_dir=sub_path.parent,
+                sheets=sub_sheets,
+                all_components=all_components,
+                all_power_symbols=all_power_symbols,
+                sheet_pairs=sheet_pairs,
+                visited=visited,
+            )
 
 
 def _extract_title_block(sch: ksa.Schematic) -> TitleBlockInfo:
@@ -133,8 +225,14 @@ def _extract_properties(raw_props: dict | None) -> dict[str, str]:
 
 def _extract_components(
     sch: ksa.Schematic,
+    source_sheet: str = "",
 ) -> tuple[list[ParsedComponent], list[ParsedComponent]]:
     """Extract components and separate power symbols.
+
+    Args:
+        sch: A loaded kicad_sch_api Schematic instance.
+        source_sheet: Name of the sheet these components belong to.
+            Empty string means root sheet.
 
     Returns:
         A tuple of (regular_components, power_symbols).
@@ -154,6 +252,7 @@ def _extract_components(
             rotation=comp.rotation,
             pins=pins,
             properties=_extract_properties(comp.properties),
+            source_sheet=source_sheet,
         )
 
         if comp.reference.startswith("#PWR"):

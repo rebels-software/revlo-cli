@@ -139,3 +139,64 @@ def build_net_list(
                 existing.append(pin_conn)
 
     return list(nets_by_name.values()), unconnected_pins
+
+
+def build_merged_net_list(
+    sheet_pairs: list[tuple[ksa.Schematic, list[ParsedComponent]]],
+) -> tuple[list[ParsedNet], list[PinConnection]]:
+    """Build a merged net list across multiple sheets.
+
+    Takes a list of (ksa.Schematic, components) pairs — one per sheet
+    including the root — and merges nets by name across all sheets.
+    Pin connections are deduplicated and labels are merged.
+
+    Args:
+        sheet_pairs: List of (schematic, all_components) tuples, one per sheet.
+
+    Returns:
+        A tuple of (nets, unconnected_pins) covering all sheets.
+    """
+    if not sheet_pairs:
+        return [], []
+
+    # If there is only a single sheet, delegate to the original builder
+    # for backward compatibility and efficiency.
+    if len(sheet_pairs) == 1:
+        sch, comps = sheet_pairs[0]
+        return build_net_list(sch, comps)
+
+    # Collect per-sheet net lists and merge them.
+    merged_nets: dict[str, ParsedNet] = {}
+    all_unconnected: list[PinConnection] = []
+
+    for sch, comps in sheet_pairs:
+        sheet_nets, sheet_unconnected = build_net_list(sch, comps)
+        all_unconnected.extend(sheet_unconnected)
+
+        for net in sheet_nets:
+            if net.name in merged_nets:
+                existing = merged_nets[net.name]
+
+                # Merge pin connections (deduplicate).
+                for pin_conn in net.pins:
+                    if not any(
+                        p.component_ref == pin_conn.component_ref
+                        and p.pin_number == pin_conn.pin_number
+                        for p in existing.pins
+                    ):
+                        existing.pins.append(pin_conn)
+
+                # Merge labels (deduplicate).
+                existing_labels = set(existing.labels)
+                for label in net.labels:
+                    if label not in existing_labels:
+                        existing.labels.append(label)
+                        existing_labels.add(label)
+
+                # Promote to power if any sheet classifies it as power.
+                if net.is_power:
+                    existing.is_power = True
+            else:
+                merged_nets[net.name] = net
+
+    return list(merged_nets.values()), all_unconnected
