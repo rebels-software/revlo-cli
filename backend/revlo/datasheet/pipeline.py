@@ -35,35 +35,43 @@ async def _process_component(
     """
     mpn = part.mpn
 
+    ref = comp.reference
+
     # 1. Check cache first.
     cached = cache.get(mpn)
     if cached is not None and cached.spec is not None:
-        logger.info("Cache hit for %s (%s)", comp.reference, mpn)
+        logger.info("[%s] Cache hit for %s", ref, mpn)
         return cached.spec
 
     # 2. Resolve datasheet URL.
+    logger.info("[%s] Resolving datasheet URL for %s ...", ref, mpn)
     url = await resolve_datasheet_url(part)
     if url is None:
-        logger.warning("No datasheet URL resolved for %s (%s)", comp.reference, mpn)
+        logger.warning("[%s] No datasheet URL resolved for %s", ref, mpn)
         return None
 
     # 3. Download PDF.
+    logger.info("[%s] Downloading %s ...", ref, url)
     pdf_path = await download_pdf(url, cache_dir)
     if pdf_path is None:
-        logger.warning("PDF download failed for %s (%s): %s", comp.reference, mpn, url)
+        logger.warning("[%s] PDF download failed: %s", ref, url)
         return None
+    logger.info("[%s] Downloaded -> %s", ref, pdf_path)
 
     # 4. Extract text from PDF.
+    logger.info("[%s] Extracting text from PDF ...", ref)
     pdf_text = extract_text(pdf_path)
     if not pdf_text:
-        logger.warning("No text extracted from PDF for %s (%s)", comp.reference, mpn)
+        logger.warning("[%s] No text extracted from PDF", ref)
         return None
 
     # 5. Extract structured spec via Claude.
+    logger.info("[%s] Extracting spec via Claude ...", ref)
     spec = await extract_spec(pdf_text, mpn)
     if spec is None:
-        logger.warning("Spec extraction failed for %s (%s)", comp.reference, mpn)
+        logger.warning("[%s] Spec extraction failed for %s", ref, mpn)
         return None
+    logger.info("[%s] Spec extracted successfully", ref)
 
     # 6. Store in cache.
     entry = DatasheetCacheEntry(

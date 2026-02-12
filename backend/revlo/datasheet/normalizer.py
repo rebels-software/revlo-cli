@@ -11,11 +11,36 @@ import re
 from revlo.datasheet.models import NormalizedPartNumber
 from revlo.parser.models import ParsedComponent, ParsedSchematic
 
-# lib_id prefixes that indicate generic/passive parts.
-_GENERIC_LIB_PREFIXES = ("Device:", "power:")
+# lib_id prefixes that indicate generic/passive/mechanical parts.
+_GENERIC_LIB_PREFIXES = (
+    "Device:",
+    "power:",
+    "Connector:",
+    "Connector_Generic:",
+    "MountingHole:",
+    "Mechanical:",
+    "TestPoint:",
+    "Jumper:",
+)
 
 # Reference designator prefixes for passive components.
 _PASSIVE_REF_PREFIXES = ("R", "C", "L", "D")
+
+# Reference designator prefixes for mechanical/interconnect parts that
+# should always be treated as generic (no datasheet lookup needed).
+_SKIP_REF_PREFIXES = {
+    "H",   # mounting holes
+    "MH",  # mounting holes (alternative)
+    "J",   # connectors
+    "P",   # connectors (alternative)
+    "TP",  # test points
+    "JP",  # solder jumpers
+    "F",   # fuses
+    "FB",  # ferrite beads
+    "SW",  # switches
+    "BT",  # batteries
+    "MP",  # mechanical parts
+}
 
 # Pattern matching a simple passive value: number with optional decimal,
 # followed by an SI unit suffix (e.g. "100nF", "10k", "4.7uF", "22pF",
@@ -40,20 +65,28 @@ def _extract_ref_prefix(reference: str) -> str:
 
 
 def _is_generic_part(comp: ParsedComponent) -> bool:
-    """Determine whether a component is a generic/passive part.
+    """Determine whether a component is a generic/passive/mechanical part.
 
-    A component is generic if:
-    - Its lib_id starts with a known generic prefix (e.g. "Device:"), OR
-    - Its reference prefix is a passive type AND the value looks like a
-      simple number+unit pattern (e.g. "100nF", "10k", "4.7uF").
+    A component is generic if any of these conditions hold:
+    - Its lib_id starts with a known generic prefix (e.g. "Device:",
+      "Connector:", "Mechanical:", "TestPoint:", etc.), OR
+    - Its reference designator prefix is in _SKIP_REF_PREFIXES (e.g. "J",
+      "TP", "MH", "SW" etc.) -- these are always generic regardless of
+      value, OR
+    - Its reference prefix is a passive type (R, C, L, D) AND the value
+      looks like a simple number+unit pattern (e.g. "100nF", "10k").
     """
     # Check lib_id prefix first.
     for prefix in _GENERIC_LIB_PREFIXES:
         if comp.lib_id.startswith(prefix):
             return True
 
-    # Check reference prefix + value pattern.
+    # Check reference prefix against skip set (mechanical/interconnect).
     ref_prefix = _extract_ref_prefix(comp.reference)
+    if ref_prefix in _SKIP_REF_PREFIXES:
+        return True
+
+    # Check reference prefix + value pattern for passives.
     if ref_prefix in _PASSIVE_REF_PREFIXES and _PASSIVE_VALUE_RE.match(
         comp.value.strip()
     ):

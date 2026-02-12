@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 _MAX_PDF_SIZE = 200 * 1024 * 1024  # 200 MB
 _CONNECT_TIMEOUT = 30.0  # seconds
 _READ_TIMEOUT = 60.0  # seconds
+_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 
 def _sha256(path: Path) -> str:
@@ -65,7 +66,8 @@ async def download_pdf(url: str, cache_dir: Path) -> Path | None:
     timeout = httpx.Timeout(connect=_CONNECT_TIMEOUT, read=_READ_TIMEOUT, write=_READ_TIMEOUT, pool=_CONNECT_TIMEOUT)
 
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        headers = {"User-Agent": _USER_AGENT}
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
             # Use streaming to inspect Content-Length before downloading body.
             async with client.stream("GET", url) as response:
                 response.raise_for_status()

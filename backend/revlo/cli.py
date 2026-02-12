@@ -143,7 +143,13 @@ def main() -> None:
 
     load_dotenv()
 
-    logging.basicConfig()
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(name)s: %(message)s",
+        stream=sys.stderr,
+    )
+    # Show progress for the datasheet pipeline.
+    logging.getLogger("revlo.datasheet.pipeline").setLevel(logging.INFO)
 
     parser = _build_parser()
     args = parser.parse_args()

@@ -173,11 +173,13 @@ JSON schema:
 ```
 
 Rules:
-- Return `[]` (empty array) if no issues are found.
+- Be thorough: report every potential design issue you can identify, even if you are \
+not fully certain. Use the `confidence` field to express certainty (0.0-1.0) rather \
+than omitting uncertain findings. A low-confidence finding is more valuable than a \
+missed issue.
+- Return `[]` (empty array) only if you are confident no issues exist.
 - Do NOT wrap the JSON in markdown code fences or add any text outside the array.
 - The `component_ref` field must reference a component from the schematic data above.
-- The `confidence` field (0.0-1.0) reflects how certain you are about the finding \
-given only schematic data (no PCB layout information is available).
 - Be precise: cite specific pin numbers and net names in your descriptions.
 - Prefer actionable recommendations over vague advice.
 - NEVER report meta-findings about the schematic data itself (e.g. "incomplete data", \
@@ -220,11 +222,13 @@ JSON schema:
 ```
 
 Rules:
-- Return `[]` (empty array) if no issues are found.
+- Be thorough: report every potential design issue you can identify, even if you are \
+not fully certain. Use the `confidence` field to express certainty (0.0-1.0) rather \
+than omitting uncertain findings. A low-confidence finding is more valuable than a \
+missed issue.
+- Return `[]` (empty array) only if you are confident no issues exist.
 - Do NOT wrap the JSON in markdown code fences or add any text outside the array.
 - The `component_ref` field must reference a component from the schematic data above.
-- The `confidence` field (0.0-1.0) reflects how certain you are about the finding \
-given only schematic data (no PCB layout information is available).
 - Be precise: cite specific pin numbers and net names in your descriptions.
 - Prefer actionable recommendations over vague advice.
 - NEVER report meta-findings about the schematic data itself (e.g. "incomplete data", \

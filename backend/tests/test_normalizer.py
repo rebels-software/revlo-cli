@@ -279,11 +279,21 @@ def test_non_generic_capacitor_with_mpn_like_value():
     assert normalized.is_generic is False
 
 
-def test_non_generic_connector():
+def test_connector_is_generic_by_lib_id():
     comp = ParsedComponent(
         reference="J1",
         value="USB-C",
         lib_id="Connector:USB_C",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is True
+
+
+def test_non_generic_ic():
+    comp = ParsedComponent(
+        reference="U11",
+        value="TPS62160",
+        lib_id="Regulator_Switching:TPS62160",
     )
     normalized = normalize_part(comp)
     assert normalized.is_generic is False
@@ -428,3 +438,123 @@ def test_value_with_ohm_symbol():
     )
     normalized = normalize_part(comp)
     assert normalized.is_generic is True
+
+
+# -------------------------------------------------------------------------
+# Generic Part Detection: New lib_id Prefixes
+# -------------------------------------------------------------------------
+
+
+def test_generic_connector_generic_lib_id():
+    comp = ParsedComponent(
+        reference="J2",
+        value="Conn_01x04",
+        lib_id="Connector_Generic:Conn_01x04",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is True
+
+
+def test_generic_mounting_hole_lib_id():
+    comp = ParsedComponent(
+        reference="H1",
+        value="MountingHole",
+        lib_id="MountingHole:MountingHole_3.2mm",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is True
+
+
+def test_generic_mechanical_lib_id():
+    comp = ParsedComponent(
+        reference="MP1",
+        value="Heatsink",
+        lib_id="Mechanical:Heatsink",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is True
+
+
+def test_generic_test_point_lib_id():
+    comp = ParsedComponent(
+        reference="TP1",
+        value="TestPoint",
+        lib_id="TestPoint:TestPoint",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is True
+
+
+def test_generic_jumper_lib_id():
+    comp = ParsedComponent(
+        reference="JP1",
+        value="SolderJumper_2_Open",
+        lib_id="Jumper:SolderJumper_2_Open",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is True
+
+
+# -------------------------------------------------------------------------
+# Generic Part Detection: _SKIP_REF_PREFIXES
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ref,value,lib_id",
+    [
+        ("H1", "MountingHole", "Custom:MountingHole"),
+        ("MH1", "MountingHole", "Custom:MH"),
+        ("J3", "USB-C", "Custom:USB_C"),
+        ("P1", "Header_2x10", "Custom:Header"),
+        ("TP2", "TestPoint", "Custom:TP"),
+        ("JP2", "Jumper", "Custom:JP"),
+        ("F1", "500mA", "Custom:Fuse"),
+        ("FB1", "600R@100MHz", "Custom:FB"),
+        ("SW1", "Push", "Custom:SW"),
+        ("BT1", "CR2032", "Custom:Battery"),
+        ("MP2", "Fiducial", "Custom:Fiducial"),
+    ],
+)
+def test_generic_by_ref_prefix(ref, value, lib_id):
+    """Parts with skip-ref prefixes are always generic regardless of lib_id."""
+    comp = ParsedComponent(
+        reference=ref,
+        value=value,
+        lib_id=lib_id,
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is True
+
+
+def test_skip_ref_prefix_with_multi_digit_number():
+    """Ref prefix extraction handles multi-digit suffixes."""
+    comp = ParsedComponent(
+        reference="J123",
+        value="SomeConnector",
+        lib_id="Custom:Conn",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is True
+
+
+def test_non_skip_ref_prefix_still_non_generic():
+    """A component with a non-skip, non-passive ref is still non-generic."""
+    comp = ParsedComponent(
+        reference="U12",
+        value="STM32F411",
+        lib_id="MCU_ST_STM32:STM32F411",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is False
+
+
+def test_passive_ref_with_mpn_value_still_non_generic():
+    """A resistor with a part-number value (not simple passive) stays non-generic."""
+    comp = ParsedComponent(
+        reference="R10",
+        value="ERJ-6ENF1002V",
+        lib_id="Resistor_SMD:R_0603",
+    )
+    normalized = normalize_part(comp)
+    assert normalized.is_generic is False
