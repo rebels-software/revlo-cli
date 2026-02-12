@@ -6,9 +6,10 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import Footer, Label, ListItem, ListView, Static
+from textual.widgets import Label, ListItem, ListView, Static
 
 from revlo.report.markdown import generate_markdown_report
 from revlo.reviewer.models import Finding, ReviewReport, Severity
@@ -17,10 +18,15 @@ from revlo.reviewer.models import Finding, ReviewReport, Severity
 # Brand colours
 # ---------------------------------------------------------------------------
 DEEP_NAVY = "#0A1628"
-MIDNIGHT_BLUE = "#1E3A5F"
+PANEL_BG = "#0F1929"
+MIDNIGHT_BLUE = "#5F471E"
+BORDER_DIM = "#2A3A50"
 ELECTRIC_TEAL = "#00D4AA"
 SIGNAL_RED = "#FF4757"
 WARM_AMBER = "#FFB347"
+SOFT_WHITE = "#E8ECF1"
+LIGHT_GRAY = "#B8C5D6"
+MUTED_GRAY = "#6B7B8D"
 
 _SEVERITY_ORDER = [Severity.error, Severity.warning, Severity.suggestion]
 _SEVERITY_LABEL: dict[Severity, str] = {
@@ -33,11 +39,129 @@ _SEVERITY_ICON: dict[Severity, str] = {
     Severity.warning: "\u25B2",
     Severity.suggestion: "\u25C6",
 }
+_SEVERITY_COLOR: dict[Severity, str] = {
+    Severity.error: SIGNAL_RED,
+    Severity.warning: WARM_AMBER,
+    Severity.suggestion: ELECTRIC_TEAL,
+}
+
+_FILTER_NAMES: dict[str, str] = {
+    "all": "Filters",
+    "errors": "Errors",
+    "warnings": "Warnings",
+    "suggestions": "Suggestions",
+}
+
+
+def _build_filter_left(filter_name: str) -> str:
+    label = _FILTER_NAMES.get(filter_name, "All Findings")
+    return f"[bold {ELECTRIC_TEAL}]\u25c6[/] [{SOFT_WHITE}]{label}[/]"
+
+
+def _build_filter_center() -> str:
+    return (
+        f"  [{MUTED_GRAY}]\u2502[/]"
+        f"  [{SIGNAL_RED}]e[/][{MUTED_GRAY}]rrors[/]"
+        f"  [{WARM_AMBER}]w[/][{MUTED_GRAY}]arnings[/]"
+        f"  [{ELECTRIC_TEAL}]s[/][{MUTED_GRAY}]uggestions[/]"
+        f"  [{SOFT_WHITE}]a[/][{MUTED_GRAY}]ll[/]"
+    )
+
+
+def _build_filter_right() -> str:
+    return (
+        f"[{MUTED_GRAY}]\\[[/][{SOFT_WHITE}]m[/][{MUTED_GRAY}]] export  "
+        f"\\[[/][{SOFT_WHITE}]q[/][{MUTED_GRAY}]] quit[/]"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Custom widgets
 # ---------------------------------------------------------------------------
+
+
+class BrandHeader(Horizontal):
+    """Top header bar showing the Revlo brand, schematic name, stats, and date."""
+
+    def __init__(
+        self,
+        schematic_name: str,
+        review_date: str,
+        report: ReviewReport | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._schematic_name = schematic_name
+        self._review_date = review_date or ""
+        self._report = report
+
+    def compose(self) -> ComposeResult:
+        yield Label(
+            f"[bold {ELECTRIC_TEAL}]\u25c6 Revlo[/] [{MUTED_GRAY}]- AI-powered hardware review[/]",
+            id="header-left",
+        )
+        yield Label(
+            f"[bold {SOFT_WHITE}]{self._schematic_name}[/]",
+            id="header-center",
+        )
+        stats_text = ""
+        if self._report and self._report.findings:
+            s = self._report.stats
+            stats_text = (
+                f"[{SIGNAL_RED}]{s.error}\u2717[/]  "
+                f"[{WARM_AMBER}]{s.warning}\u25B2[/]  "
+                f"[{ELECTRIC_TEAL}]{s.suggestion}\u25C6[/]"
+                f"  [{MUTED_GRAY}]\u2502[/]  "
+            )
+        yield Label(
+            f"{stats_text}[{LIGHT_GRAY}]{self._review_date}[/]",
+            id="header-right",
+        )
+
+
+class StatsBar(Horizontal):
+    """Horizontal bar showing severity count badges."""
+
+    def __init__(self, report: ReviewReport, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._report = report
+
+    def compose(self) -> ComposeResult:
+        stats = self._report.stats
+        yield Label(
+            f"[bold {SIGNAL_RED}]\u2717[/] {stats.error} errors",
+            classes="stat-badge stat-error",
+        )
+        yield Label(
+            f"[bold {WARM_AMBER}]\u25B2[/] {stats.warning} warnings",
+            classes="stat-badge stat-warning",
+        )
+        yield Label(
+            f"[bold {ELECTRIC_TEAL}]\u25C6[/] {stats.suggestion} suggestions",
+            classes="stat-badge stat-suggestion",
+        )
+        yield Label(
+            f"[bold {SOFT_WHITE}]\u2211[/] {stats.total} total",
+            classes="stat-badge stat-total",
+        )
+
+
+class SeverityGroupHeader(ListItem):
+    """Visual group header showing severity name and count."""
+
+    def __init__(self, severity: Severity, count: int) -> None:
+        super().__init__(disabled=True)
+        self._severity = severity
+        self._count = count
+
+    def compose(self) -> ComposeResult:
+        icon = _SEVERITY_ICON[self._severity]
+        label = _SEVERITY_LABEL[self._severity]
+        color = _SEVERITY_COLOR[self._severity]
+        yield Label(
+            f"[bold {color}]{icon} {label}S ({self._count})[/]",
+            classes="group-header-label",
+        )
 
 
 class FindingItem(ListItem):
@@ -51,18 +175,26 @@ class FindingItem(ListItem):
     def compose(self) -> ComposeResult:
         sev = self.finding.severity
         icon = _SEVERITY_ICON[sev]
-        label = _SEVERITY_LABEL[sev]
+        color = _SEVERITY_COLOR[sev]
         ref = self.finding.component_ref
         title = self.finding.title
-        css_class = f"severity-{sev.value}"
         yield Label(
-            f"{icon} [{label}] {ref}: {title}",
-            classes=f"finding-label {css_class}",
+            f"[{color}]{icon}[/]  [{SOFT_WHITE}]{ref}:[/] [{LIGHT_GRAY}]{title}[/]",
+            classes="finding-label",
         )
 
 
 class FindingsSidebar(ListView):
     """Sidebar listing findings grouped by severity."""
+
+    DEFAULT_CSS = """
+    FindingsSidebar {
+        background: #0A1628;
+    }
+    """
+
+    def on_mount(self) -> None:
+        self.styles.background = Color.parse("#0A1628")
 
     def __init__(
         self,
@@ -73,16 +205,24 @@ class FindingsSidebar(ListView):
         self._all_findings = findings
         super().__init__(id=id)
 
+    def _build_items(self) -> list[ListItem]:
+        items: list[ListItem] = []
+        for sev in _SEVERITY_ORDER:
+            group = [f for f in self._all_findings if f.severity == sev]
+            if group:
+                items.append(SeverityGroupHeader(sev, len(group)))
+                for idx, finding in enumerate(self._all_findings):
+                    if finding.severity == sev:
+                        items.append(FindingItem(finding, idx))
+        return items
+
     def compose(self) -> ComposeResult:
-        for idx, finding in enumerate(self._all_findings):
-            yield FindingItem(finding, idx)
+        yield from self._build_items()
 
     def rebuild(self, findings: list[Finding]) -> None:
-        """Clear and repopulate the list with *findings*."""
         self._all_findings = findings
         self.clear()
-        for idx, finding in enumerate(findings):
-            item = FindingItem(finding, idx)
+        for item in self._build_items():
             self.append(item)
 
 
@@ -90,36 +230,83 @@ class DetailPanel(Vertical):
     """Right-hand panel showing full details of the selected finding."""
 
     def compose(self) -> ComposeResult:
-        yield Static("Select a finding to view details.", id="detail-content")
+        yield Static(
+            f"[{LIGHT_GRAY}]Select a finding to view details.[/]",
+            id="detail-placeholder",
+        )
+        yield Static("", id="detail-content")
+        yield Static("", id="detail-description")
+        yield Static("", id="detail-recommendation")
+
+    def on_mount(self) -> None:
+        self.query_one("#detail-description", Static).border_title = "Description"
+        self.query_one("#detail-recommendation", Static).border_title = "Recommendation"
 
     def show_finding(self, finding: Finding) -> None:
-        """Render *finding* details into the panel."""
         sev = finding.severity
         icon = _SEVERITY_ICON[sev]
         label = _SEVERITY_LABEL[sev]
+        color = _SEVERITY_COLOR[sev]
 
-        lines = [
-            f"{icon} {label}  {finding.title}",
+        filled = int(finding.confidence * 10)
+        bar = "\u2588" * filled + "\u2591" * (10 - filled)
+        pct = f"{finding.confidence:.0%}"
+
+        header_lines = [
+            f"[bold {color}]{icon} {label}[/]  [bold {SOFT_WHITE}]{finding.title}[/]",
             "",
-            f"Component:  {finding.component_ref}",
-            f"Category:   {finding.category.value}",
-            f"Confidence: {finding.confidence:.0%}",
-            "",
-            "Description",
-            "-" * 40,
-            finding.description,
-            "",
-            "Recommendation",
-            "-" * 40,
-            finding.recommendation,
+            f"[{SOFT_WHITE}]Component:[/]  [{ELECTRIC_TEAL}]{finding.component_ref}[/]",
+            f"[{SOFT_WHITE}]Category:[/]   [{LIGHT_GRAY}]{finding.category.value}[/]",
+            f"[{SOFT_WHITE}]Confidence:[/] [{ELECTRIC_TEAL}]{bar}[/] {pct}",
         ]
+
+        self.query_one("#detail-placeholder", Static).styles.display = "none"
         content = self.query_one("#detail-content", Static)
-        content.update("\n".join(lines))
+        content.styles.display = "block"
+        content.update("\n".join(header_lines))
+
+        desc = self.query_one("#detail-description", Static)
+        desc.styles.display = "block"
+        desc.update(finding.description)
+
+        rec = self.query_one("#detail-recommendation", Static)
+        rec.styles.display = "block"
+        rec.update(finding.recommendation)
 
     def show_empty(self) -> None:
-        """Show the empty-state message."""
-        content = self.query_one("#detail-content", Static)
-        content.update("\u2713 No issues found! Your schematic looks good.")
+        self.query_one("#detail-placeholder", Static).styles.display = "block"
+        self.query_one("#detail-placeholder", Static).update(
+            f"[{ELECTRIC_TEAL}]\u2713 No issues found! Your schematic looks good.[/]"
+        )
+        self.query_one("#detail-content", Static).styles.display = "none"
+        self.query_one("#detail-description", Static).styles.display = "none"
+        self.query_one("#detail-recommendation", Static).styles.display = "none"
+
+
+class FilterBar(Horizontal):
+    """Bottom bar showing active filter name and keybinding hints."""
+
+    _active_filter: str = "all"
+
+    def compose(self) -> ComposeResult:
+        yield Label(
+            _build_filter_left(self._active_filter),
+            id="filter-left",
+        )
+        yield Label(
+            _build_filter_center(),
+            id="filter-center",
+        )
+        yield Label(
+            _build_filter_right(),
+            id="filter-right",
+        )
+
+    def set_filter(self, filter_name: str) -> None:
+        self._active_filter = filter_name
+        self.query_one("#filter-left", Label).update(
+            _build_filter_left(filter_name)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -134,16 +321,16 @@ class RevloApp(App[None]):
     TITLE = "Revlo Review"
 
     BINDINGS = [
-        Binding("q", "quit", "Quit", show=True),
+        Binding("q", "quit", "Quit", show=False),
         Binding("escape", "quit", "Quit", show=False),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
-        Binding("e", "filter_errors", "Errors", show=True),
-        Binding("w", "filter_warnings", "Warnings", show=True),
-        Binding("s", "filter_suggestions", "Suggestions", show=True),
-        Binding("a", "filter_all", "All", show=True),
-        Binding("m", "export_markdown", "Export MD", show=True),
-        Binding("enter", "open_datasheet", "Open URL", show=True),
+        Binding("e", "filter_errors", "Errors", show=False),
+        Binding("w", "filter_warnings", "Warnings", show=False),
+        Binding("s", "filter_suggestions", "Suggestions", show=False),
+        Binding("a", "filter_all", "All", show=False),
+        Binding("m", "export_markdown", "Export MD", show=False),
+        Binding("enter", "open_datasheet", "Open URL", show=False),
     ]
 
     active_filter: reactive[str] = reactive("all")
@@ -159,16 +346,12 @@ class RevloApp(App[None]):
         self.schematic_path = schematic_path
         self._sorted_findings = self._sort_findings(report.findings)
 
-    # -- helpers -------------------------------------------------------------
-
     @staticmethod
     def _sort_findings(findings: list[Finding]) -> list[Finding]:
-        """Return findings sorted by severity (errors first)."""
         order = {Severity.error: 0, Severity.warning: 1, Severity.suggestion: 2}
         return sorted(findings, key=lambda f: order.get(f.severity, 99))
 
     def _filtered_findings(self) -> list[Finding]:
-        """Return findings matching the active filter."""
         filt = self.active_filter
         if filt == "all":
             return list(self._sorted_findings)
@@ -182,13 +365,14 @@ class RevloApp(App[None]):
             return list(self._sorted_findings)
         return [f for f in self._sorted_findings if f.severity == target]
 
-    # -- compose -------------------------------------------------------------
-
     def compose(self) -> ComposeResult:
-        yield Footer()
+        sch_name = Path(self.schematic_path).name
+        review_date = self.report.review_date
+        yield BrandHeader(sch_name, review_date, report=self.report, id="brand-header")
         if not self.report.findings:
             yield Static(
-                "\u2713 No issues found! Your schematic looks good.",
+                f"[{ELECTRIC_TEAL}]\u2713 No issues found! "
+                f"Your schematic looks good.[/]",
                 id="empty-state",
             )
         else:
@@ -198,18 +382,17 @@ class RevloApp(App[None]):
                     id="sidebar",
                 )
                 yield DetailPanel(id="detail-panel")
+        yield FilterBar(id="filter-bar")
 
-    # -- watchers / events ---------------------------------------------------
+    # -- events --
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """When a finding is selected in the sidebar, show its details."""
         item = event.item
         if isinstance(item, FindingItem):
             panel = self.query_one("#detail-panel", DetailPanel)
             panel.show_finding(item.finding)
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        """Update detail panel on highlight change (cursor movement)."""
         item = event.item
         if isinstance(item, FindingItem):
             try:
@@ -218,7 +401,7 @@ class RevloApp(App[None]):
             except Exception:
                 pass
 
-    # -- filter actions ------------------------------------------------------
+    # -- filter actions --
 
     def _apply_filter(self, filter_name: str) -> None:
         self.active_filter = filter_name
@@ -227,6 +410,10 @@ class RevloApp(App[None]):
         except Exception:
             return
         sidebar.rebuild(self._filtered_findings())
+        try:
+            self.query_one("#filter-bar", FilterBar).set_filter(filter_name)
+        except Exception:
+            pass
 
     def action_filter_errors(self) -> None:
         self._apply_filter("errors")
@@ -240,7 +427,7 @@ class RevloApp(App[None]):
     def action_filter_all(self) -> None:
         self._apply_filter("all")
 
-    # -- navigation ----------------------------------------------------------
+    # -- navigation --
 
     def action_cursor_down(self) -> None:
         try:
@@ -256,10 +443,9 @@ class RevloApp(App[None]):
         except Exception:
             pass
 
-    # -- export / open -------------------------------------------------------
+    # -- export / open --
 
     def action_export_markdown(self) -> None:
-        """Export the markdown report to ``{schematic_name}-review.md``."""
         stem = Path(self.schematic_path).stem
         out_path = Path(self.schematic_path).parent / f"{stem}-review.md"
         md = generate_markdown_report(self.report)
@@ -267,7 +453,6 @@ class RevloApp(App[None]):
         self.notify(f"Exported to {out_path.name}")
 
     def action_open_datasheet(self) -> None:
-        """Open the datasheet URL for the highlighted finding's component."""
         try:
             sidebar = self.query_one("#sidebar", FindingsSidebar)
         except Exception:
@@ -275,7 +460,4 @@ class RevloApp(App[None]):
         highlighted = sidebar.highlighted_child
         if not isinstance(highlighted, FindingItem):
             return
-        # Finding model doesn't carry a datasheet_url; look for one in
-        # the schematic-level parsed data if we ever add it.  For now
-        # this is a no-op with a notification.
         self.notify("No datasheet URL available for this finding.")

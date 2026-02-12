@@ -19,10 +19,14 @@ from revlo.reviewer.models import (
 )
 from revlo.tui.app import (
     DEEP_NAVY,
+    BrandHeader,
     DetailPanel,
+    FilterBar,
     FindingItem,
     FindingsSidebar,
     RevloApp,
+    SeverityGroupHeader,
+    StatsBar,
     _SEVERITY_LABEL,
     _SEVERITY_ORDER,
 )
@@ -203,6 +207,44 @@ class TestRevloAppCompose:
         async with app.run_test() as _pilot:
             assert app.title == "Revlo Review"
 
+    @pytest.mark.asyncio
+    async def test_brand_header_present(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+        async with app.run_test() as _pilot:
+            header = app.query_one("#brand-header", BrandHeader)
+            assert header is not None
+
+    @pytest.mark.asyncio
+    async def test_stats_bar_present(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+        async with app.run_test() as _pilot:
+            stats = app.query_one("#stats-bar", StatsBar)
+            assert stats is not None
+
+    @pytest.mark.asyncio
+    async def test_filter_bar_present(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+        async with app.run_test() as _pilot:
+            fbar = app.query_one("#filter-bar", FilterBar)
+            assert fbar is not None
+
+    @pytest.mark.asyncio
+    async def test_severity_group_headers_present(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+        async with app.run_test() as _pilot:
+            sidebar = app.query_one("#sidebar", FindingsSidebar)
+            headers = sidebar.query(SeverityGroupHeader)
+            # sample_report has 3 severities, so 3 group headers
+            assert len(headers) == 3
+
 
 class TestKeyboardNavigation:
     """Test key bindings via the Pilot."""
@@ -282,6 +324,18 @@ class TestFilterKeys:
             items = sidebar.query(FindingItem)
             assert len(items) == 3
 
+    @pytest.mark.asyncio
+    async def test_filter_key_updates_filter_bar(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+        async with app.run_test() as pilot:
+            await pilot.press("e")
+            await pilot.pause()
+            fbar = app.query_one("#filter-bar", FilterBar)
+            # FilterBar should reflect "Errors Only" after pressing 'e'
+            assert fbar._active_filter == "errors"
+
 
 class TestMarkdownExport:
     """Test the 'm' key exports a markdown report file."""
@@ -312,11 +366,11 @@ class TestDetailPanel:
     ):
         app = RevloApp(sample_report, schematic_path)
         async with app.run_test() as pilot:
-            # The first item should be highlighted by default
+            # ListView should auto-highlight first enabled item (first FindingItem)
             await pilot.pause()
-            detail = app.query_one("#detail-content")
-            text = detail.render().plain
-            # First finding (error) should be shown since it auto-highlights
+            content = app.query_one("#detail-content")
+            text = content.render().plain
+            # First finding (error) should be shown
             assert "U1" in text or "Missing cap" in text or "ERROR" in text
 
     @pytest.mark.asyncio
@@ -325,13 +379,16 @@ class TestDetailPanel:
     ):
         app = RevloApp(sample_report, schematic_path)
         async with app.run_test() as pilot:
+            # Press j twice: first lands on FindingItem after group header,
+            # second moves to next group header or finding
             await pilot.press("j")
             await pilot.pause()
-            # After moving down, the detail panel should update
-            detail = app.query_one("#detail-content")
-            text = detail.render().plain
-            # Should show one of the findings
-            assert len(text) > 10  # Not the placeholder text
+            await pilot.press("j")
+            await pilot.pause()
+            # After navigating, detail panel should have content
+            content = app.query_one("#detail-content")
+            text = content.render().plain
+            assert len(text) > 10
 
     @pytest.mark.asyncio
     async def test_k_moves_cursor_up(
@@ -339,13 +396,15 @@ class TestDetailPanel:
     ):
         app = RevloApp(sample_report, schematic_path)
         async with app.run_test() as pilot:
-            # Move down first, then back up
+            # Move down to a FindingItem, then back up
+            await pilot.press("j")
+            await pilot.pause()
             await pilot.press("j")
             await pilot.pause()
             await pilot.press("k")
             await pilot.pause()
-            detail = app.query_one("#detail-content")
-            text = detail.render().plain
+            content = app.query_one("#detail-content")
+            text = content.render().plain
             assert len(text) > 10
 
 
@@ -370,6 +429,7 @@ class TestEnterKey:
 class TestCLITuiIntegration:
     """Test that the CLI launches (or skips) the TUI correctly."""
 
+    @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
     @patch("revlo.cli.parse_schematic")
     @patch("revlo.cli.review_schematic")
     @patch("revlo.cli.generate_markdown_report")
@@ -379,6 +439,7 @@ class TestCLITuiIntegration:
         mock_markdown: MagicMock,
         mock_review: AsyncMock,
         mock_parse: MagicMock,
+        mock_save: MagicMock,
         sample_report: ReviewReport,
         capsys,
     ):
@@ -404,6 +465,7 @@ class TestCLITuiIntegration:
         captured = capsys.readouterr()
         assert "findings" in captured.out
 
+    @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
     @patch("revlo.cli.parse_schematic")
     @patch("revlo.cli.review_schematic")
     @patch("revlo.cli.generate_markdown_report")
@@ -413,6 +475,7 @@ class TestCLITuiIntegration:
         mock_markdown: MagicMock,
         mock_review: AsyncMock,
         mock_parse: MagicMock,
+        mock_save: MagicMock,
         sample_report: ReviewReport,
         tmp_path: Path,
     ):
@@ -439,6 +502,7 @@ class TestCLITuiIntegration:
 
         assert out.exists()
 
+    @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
     @patch("revlo.cli.parse_schematic")
     @patch("revlo.cli.review_schematic")
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
@@ -446,6 +510,7 @@ class TestCLITuiIntegration:
         self,
         mock_review: AsyncMock,
         mock_parse: MagicMock,
+        mock_save: MagicMock,
         sample_report: ReviewReport,
         capsys,
     ):
@@ -473,6 +538,7 @@ class TestCLITuiIntegration:
         assert captured.out == ""
         assert "ERROR" in captured.err or "U1" in captured.err
 
+    @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
     @patch("revlo.cli.parse_schematic")
     @patch("revlo.cli.review_schematic")
     @patch("revlo.tui.RevloApp.run")
@@ -482,6 +548,7 @@ class TestCLITuiIntegration:
         mock_tui_run: MagicMock,
         mock_review: AsyncMock,
         mock_parse: MagicMock,
+        mock_save: MagicMock,
         sample_report: ReviewReport,
     ):
         """Default mode (no flags) should launch the TUI."""
