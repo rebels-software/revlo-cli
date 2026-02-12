@@ -152,15 +152,15 @@ def test_run_review_success_markdown(
     with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
         mock_asyncio_run.return_value = mock_review_report
 
-        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet"])
+        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet", "--no-tui"])
         _run_review(args)
 
     mock_parse.assert_called_once_with(fixture_path)
     mock_asyncio_run.assert_called_once()
-    mock_markdown.assert_called_once_with(mock_review_report)
 
     captured = capsys.readouterr()
-    assert "# Test Report\n" in captured.out
+    # --no-tui prints finding cards to stderr, no markdown to stdout
+    assert "ERROR" in captured.err or "U1" in captured.err
 
 
 @patch("revlo.cli.parse_schematic")
@@ -294,12 +294,10 @@ def test_run_review_rich_progress_on_stderr(
     with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
         mock_asyncio_run.return_value = mock_review_report
 
-        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet"])
+        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet", "--no-tui"])
         _run_review(args)
 
     captured = capsys.readouterr()
-    # Markdown still goes to stdout
-    assert "# Test Report" in captured.out
     # Rich progress goes to stderr
     assert "Revlo Review" in captured.err
     assert "Parsing schematic" in captured.err

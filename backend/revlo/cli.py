@@ -159,22 +159,29 @@ def _run_review(args: argparse.Namespace) -> None:
         print_finding_cards(console, report)
         return
 
-    # Format output
-    if args.json_output:
-        output = report.model_dump_json(indent=2)
-    else:
-        output = generate_markdown_report(report)
+    # -- file / JSON output modes (skip TUI) --
+    if args.json_output or args.output:
+        if args.json_output:
+            output = report.model_dump_json(indent=2)
+        else:
+            output = generate_markdown_report(report)
 
-    # Write output
-    if args.output:
-        try:
-            with open(args.output, "w") as fh:
-                fh.write(output)
-        except OSError as exc:
-            print(f"Error: could not write to {args.output}: {exc}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        print(output)
+        if args.output:
+            try:
+                with open(args.output, "w") as fh:
+                    fh.write(output)
+            except OSError as exc:
+                print(f"Error: could not write to {args.output}: {exc}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            print(output)
+        return
+
+    # -- default: launch interactive TUI --
+    from revlo.tui import RevloApp
+
+    app = RevloApp(report, path)
+    app.run()
 
 
 def main() -> None:

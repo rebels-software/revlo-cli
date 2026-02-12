@@ -144,7 +144,7 @@ def test_enrichment_pipeline_called_by_default(
         # Mock asyncio.run to return the specs and then the report
         mock_asyncio_run.side_effect = [mock_datasheet_specs, mock_review_report]
 
-        args = _build_parser().parse_args(["review", fixture_path])
+        args = _build_parser().parse_args(["review", fixture_path, "--no-tui"])
         _run_review(args)
 
     # Verify enrichment was called with parsed schematic and cache_dir
@@ -184,7 +184,7 @@ def test_skip_datasheet_flag_skips_enrichment(
     mock_asyncio_run.return_value = mock_review_report
 
     with patch("revlo.datasheet.pipeline.enrich_schematic") as mock_enrich:
-        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet"])
+        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet", "--no-tui"])
         _run_review(args)
 
     # Verify enrichment was NOT called
@@ -220,7 +220,7 @@ def test_enrichment_failure_degrades_gracefully(
             mock_review_report,
         ]
 
-        args = _build_parser().parse_args(["review", fixture_path])
+        args = _build_parser().parse_args(["review", fixture_path, "--no-tui"])
         _run_review(args)
 
     # Verify warning was logged
@@ -257,7 +257,7 @@ def test_cache_dir_defaults_to_parent_datasheets(
     with patch("revlo.datasheet.pipeline.enrich_schematic") as mock_enrich:
         mock_asyncio_run.side_effect = [mock_datasheet_specs, mock_review_report]
 
-        args = _build_parser().parse_args(["review", str(test_file)])
+        args = _build_parser().parse_args(["review", str(test_file), "--no-tui"])
         _run_review(args)
 
     # Verify cache_dir is correct
@@ -310,7 +310,7 @@ def test_specs_passed_to_review_schematic_via_asyncio_run(
 
         mock_asyncio_run.side_effect = run_impl
 
-        args = _build_parser().parse_args(["review", fixture_path])
+        args = _build_parser().parse_args(["review", fixture_path, "--no-tui"])
         _run_review(args)
 
     # Verify datasheet_specs were passed to review_schematic

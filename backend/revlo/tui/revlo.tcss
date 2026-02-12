@@ -1,0 +1,80 @@
+/* Revlo TUI stylesheet -- brand colours */
+
+Screen {
+    background: #0A1628;
+}
+
+#main-container {
+    height: 1fr;
+}
+
+/* -- Sidebar ------------------------------------------------------------ */
+
+#sidebar {
+    width: 40%;
+    min-width: 30;
+    background: #1E3A5F;
+    border-right: solid #00D4AA;
+    overflow-y: auto;
+}
+
+#sidebar > ListItem {
+    padding: 0 1;
+    height: auto;
+}
+
+#sidebar > ListItem:hover {
+    background: #0A1628;
+}
+
+#sidebar > ListItem.-highlight {
+    background: #0A1628;
+}
+
+.finding-label {
+    width: 1fr;
+}
+
+.severity-error {
+    color: #FF4757;
+}
+
+.severity-warning {
+    color: #FFB347;
+}
+
+.severity-suggestion {
+    color: #00D4AA;
+}
+
+/* -- Detail panel ------------------------------------------------------- */
+
+#detail-panel {
+    width: 1fr;
+    background: #1E3A5F;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+#detail-content {
+    width: 1fr;
+    color: #E0E0E0;
+}
+
+/* -- Empty state -------------------------------------------------------- */
+
+#empty-state {
+    width: 1fr;
+    height: 1fr;
+    content-align: center middle;
+    text-align: center;
+    color: #00D4AA;
+    text-style: bold;
+}
+
+/* -- Footer ------------------------------------------------------------- */
+
+Footer {
+    background: #1E3A5F;
+    color: #00D4AA;
+}
