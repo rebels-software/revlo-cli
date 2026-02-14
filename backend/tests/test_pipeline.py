@@ -534,7 +534,9 @@ async def test_partial_success_multiple_components(
 @patch("revlo.datasheet.pipeline.extract_text")
 @patch("revlo.datasheet.pipeline.extract_spec")
 @patch("revlo.datasheet.pipeline.DatasheetCache")
+@patch("revlo.datasheet.pipeline._find_manual_pdf", return_value=None)
 async def test_concurrent_processing_multiple_components(
+    mock_find_manual: MagicMock,
     mock_cache_class: MagicMock,
     mock_extract_spec: AsyncMock,
     mock_extract_text: MagicMock,

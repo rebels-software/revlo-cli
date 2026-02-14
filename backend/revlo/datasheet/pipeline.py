@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from revlo.datasheet.cache import DatasheetCache
@@ -22,11 +23,27 @@ from revlo.parser.models import ParsedComponent, ParsedSchematic
 logger = logging.getLogger(__name__)
 
 
+def _find_manual_pdf(mpn: str, cache_dir: Path) -> Path | None:
+    """Scan *cache_dir* recursively for a PDF whose filename contains *mpn*.
+
+    Returns the first matching :class:`Path`, or ``None`` when no match is
+    found. The comparison is case-insensitive.
+    """
+    if not cache_dir.is_dir():
+        return None
+    mpn_lower = mpn.lower()
+    for pdf in cache_dir.rglob("*.pdf"):
+        if mpn_lower in pdf.name.lower():
+            return pdf
+    return None
+
+
 async def _process_component(
     comp: ParsedComponent,
     part: NormalizedPartNumber,
     cache: DatasheetCache,
     cache_dir: Path,
+    error_callback: Callable[[str, str], None] | None = None,
 ) -> DatasheetSpec | None:
     """Run the resolve-download-extract pipeline for a single component.
 
@@ -43,29 +60,39 @@ async def _process_component(
         logger.info("[%s] Cache hit for %s", ref, mpn)
         return cached.spec
 
-    # 2. Resolve datasheet URL.
-    logger.info("[%s] Resolving datasheet URL for %s ...", ref, mpn)
-    url = await resolve_datasheet_url(part, cache_dir=str(cache_dir))
-    if url is None:
-        logger.warning("[%s] No datasheet URL resolved for %s", ref, mpn)
-        return None
+    # 2. Scan for manually placed PDFs before attempting URL resolution.
+    manual_pdf = _find_manual_pdf(mpn, cache_dir)
+    if manual_pdf is not None:
+        logger.info("[%s] Found manual PDF: %s", ref, manual_pdf)
+        pdf_path = manual_pdf
+    else:
+        # 3. Resolve datasheet URL.
+        logger.info("[%s] Resolving datasheet URL for %s ...", ref, mpn)
+        url = await resolve_datasheet_url(part, cache_dir=str(cache_dir))
+        if url is None:
+            logger.warning("[%s] No datasheet URL resolved for %s", ref, mpn)
+            if error_callback:
+                error_callback(ref, f"Could not fetch datasheet for {mpn}")
+            return None
 
-    # 3. Download PDF.
-    logger.info("[%s] Downloading %s ...", ref, url)
-    pdf_path = await download_pdf(url, cache_dir)
-    if pdf_path is None:
-        logger.warning("[%s] PDF download failed: %s", ref, url)
-        return None
-    logger.info("[%s] Downloaded -> %s", ref, pdf_path)
+        # 4. Download PDF.
+        logger.info("[%s] Downloading %s ...", ref, url)
+        pdf_path = await download_pdf(url, cache_dir)
+        if pdf_path is None:
+            logger.warning("[%s] PDF download failed: %s", ref, url)
+            if error_callback:
+                error_callback(ref, f"PDF download failed for {mpn}")
+            return None
+        logger.info("[%s] Downloaded -> %s", ref, pdf_path)
 
-    # 4. Extract text from PDF.
+    # 5. Extract text from PDF.
     logger.info("[%s] Extracting text from PDF ...", ref)
     pdf_text = extract_text(pdf_path)
     if not pdf_text:
         logger.warning("[%s] No text extracted from PDF", ref)
         return None
 
-    # 5. Extract structured spec via Claude.
+    # 6. Extract structured spec via Claude.
     logger.info("[%s] Extracting spec via Claude ...", ref)
     spec = await extract_spec(pdf_text, mpn)
     if spec is None:
@@ -73,12 +100,13 @@ async def _process_component(
         return None
     logger.info("[%s] Spec extracted successfully", ref)
 
-    # 6. Store in cache.
+    # 7. Store in cache.
+    source_url = url if manual_pdf is None else ""
     entry = DatasheetCacheEntry(
         mpn=mpn,
         spec=spec,
         pdf_path=str(pdf_path),
-        source_url=url,
+        source_url=source_url,
     )
     cache.put(mpn, entry)
 
@@ -88,6 +116,8 @@ async def _process_component(
 async def enrich_schematic(
     parsed: ParsedSchematic,
     cache_dir: Path,
+    progress_callback: Callable[[int, int], None] | None = None,
+    error_callback: Callable[[str, str], None] | None = None,
 ) -> dict[str, DatasheetSpec]:
     """Enrich a parsed schematic with datasheet specifications.
 
@@ -135,13 +165,21 @@ async def enrich_schematic(
         len(to_process),
     )
 
+    # Track progress across concurrent tasks.
+    _completed = 0
+    _total = len(to_process)
+
+    if progress_callback is not None:
+        progress_callback(0, _total)
+
     # Process non-generic parts concurrently.
     async def _safe_process(
         comp: ParsedComponent, part: NormalizedPartNumber
     ) -> tuple[str, DatasheetSpec | None]:
         """Wrapper that catches all exceptions for graceful degradation."""
+        nonlocal _completed
         try:
-            spec = await _process_component(comp, part, cache, cache_dir)
+            spec = await _process_component(comp, part, cache, cache_dir, error_callback)
             return (comp.reference, spec)
         except Exception:
             logger.warning(
@@ -151,6 +189,10 @@ async def enrich_schematic(
                 exc_info=True,
             )
             return (comp.reference, None)
+        finally:
+            _completed += 1
+            if progress_callback is not None:
+                progress_callback(_completed, _total)
 
     results = await asyncio.gather(
         *[_safe_process(comp, part) for comp, part in to_process]

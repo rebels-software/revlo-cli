@@ -19,7 +19,13 @@ logger = logging.getLogger(__name__)
 _MAX_PDF_SIZE = 200 * 1024 * 1024  # 200 MB
 _CONNECT_TIMEOUT = 10.0  # seconds
 _READ_TIMEOUT = 60.0  # seconds
-_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/pdf,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+}
 _PDF_TEXT_LIMIT = 100_000  # Max characters of extracted text
 
 # Target section patterns for smart page selection (case-insensitive)
@@ -87,7 +93,10 @@ async def download_pdf(url: str, cache_dir: Path) -> Path | None:
     timeout = httpx.Timeout(connect=_CONNECT_TIMEOUT, read=_READ_TIMEOUT, write=_READ_TIMEOUT, pool=_CONNECT_TIMEOUT)
 
     try:
-        headers = {"User-Agent": _USER_AGENT}
+        from urllib.parse import urlparse as _urlparse
+
+        _parsed = _urlparse(url)
+        headers = {**_BROWSER_HEADERS, "Referer": f"{_parsed.scheme}://{_parsed.netloc}/"}
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
             # Use streaming to inspect Content-Length before downloading body.
             async with client.stream("GET", url) as response:

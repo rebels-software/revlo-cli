@@ -18,16 +18,29 @@ from revlo.datasheet.models import NormalizedPartNumber
 logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 15.0  # seconds
-_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/pdf,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+}
 
 
 async def _validate_url(url: str) -> bool:
     """Return True if *url* is reachable (2xx/3xx HEAD response within 10s)."""
+    # Derive a Referer from the URL's origin to look like in-site navigation.
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    referer = f"{parsed.scheme}://{parsed.netloc}/"
+    headers = {**_BROWSER_HEADERS, "Referer": referer}
+
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=10.0, write=10.0, pool=10.0),
             follow_redirects=True,
-            headers={"User-Agent": _USER_AGENT},
+            headers=headers,
         ) as client:
             resp = await client.head(url)
             return resp.status_code < 400

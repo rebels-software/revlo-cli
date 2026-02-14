@@ -10,12 +10,21 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
+from rich.progress import Progress, TextColumn
 from rich.status import Status
 
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
 from revlo.reviewer import MODEL_OPUS, MODEL_SONNET, review_schematic
-from revlo.ui import print_finding_cards, print_header, print_step, print_summary
+from revlo.ui import (
+    TEAL,
+    BlockBarColumn,
+    print_error,
+    print_finding_cards,
+    print_header,
+    print_step,
+    print_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,13 +160,30 @@ def _run_review(args: argparse.Namespace) -> None:
 
             cache_dir = Path(path).parent / "datasheets"
             if show_rich:
-                with Status(
-                    "[bold #00D4AA]Fetching datasheets...",
+                with Progress(
+                    TextColumn(f"[{TEAL}]\u25A0 Fetching datasheets..."),
+                    BlockBarColumn(bar_width=30),
+                    TextColumn(f"[{TEAL}]{{task.completed}}/{{task.total}}"),
                     console=console,
-                    spinner="dots",
-                ):
+                    transient=True,
+                ) as progress:
+                    task = progress.add_task("fetch", total=0)
+
+                    def _on_progress(completed: int, total: int) -> None:
+                        progress.update(task, completed=completed, total=total)
+
+                    def _on_error(ref: str, msg: str) -> None:
+                        progress.console.print(
+                            f"  [{TEAL}]{ref}[/]: [bold #FF4757]{msg}[/]"
+                        )
+
                     datasheet_specs = asyncio.run(
-                        enrich_schematic(parsed, cache_dir)
+                        enrich_schematic(
+                            parsed,
+                            cache_dir,
+                            progress_callback=_on_progress,
+                            error_callback=_on_error,
+                        )
                     )
             else:
                 datasheet_specs = asyncio.run(
@@ -167,6 +193,8 @@ def _run_review(args: argparse.Namespace) -> None:
             logger.warning(
                 "Datasheet enrichment failed, continuing without specs: %s", exc
             )
+            if show_rich:
+                print_error(console, f"Datasheet enrichment failed: {exc}")
 
     # Resolve model choice
     _model_map = {"sonnet": MODEL_SONNET, "opus": MODEL_OPUS}
@@ -243,6 +271,14 @@ def _run_review(args: argparse.Namespace) -> None:
         return
 
     # -- default: launch interactive TUI --
+    import time
+
+    time.sleep(1.5)  # Let user read severity summary before TUI takes over.
+
+    if show_rich:
+        print_step(console, "Launching review browser...")
+        console.print()
+
     from revlo.tui import RevloApp
 
     app = RevloApp(report, path)
@@ -290,6 +326,14 @@ def _run_open(args: argparse.Namespace) -> None:
 
 def main() -> None:
     """CLI entry point."""
+    try:
+        _main_inner()
+    except KeyboardInterrupt:
+        sys.exit(130)
+
+
+def _main_inner() -> None:
+    """Actual CLI logic, wrapped by :func:`main` for clean Ctrl-C handling."""
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -297,16 +341,12 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    log_level = logging.DEBUG if args.verbose else logging.WARNING
+    log_level = logging.DEBUG if args.verbose else logging.ERROR
     logging.basicConfig(
         level=log_level,
         format="%(name)s: %(message)s",
         stream=sys.stderr,
     )
-    if not args.verbose:
-        # Show progress for the datasheet pipeline even without --verbose.
-        logging.getLogger("revlo.datasheet.pipeline").setLevel(logging.INFO)
-
     if args.command == "review":
         _run_review(args)
     elif args.command == "open":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from rich.console import Console
+from rich.progress import ProgressColumn, Task as RichTask
 from rich.text import Text
 
 from revlo.reviewer.models import ReviewReport, Severity
@@ -27,6 +28,30 @@ LOGO = (
     "██║  ██║███████╗ ╚████╔╝ ███████╗╚██████╔╝\n"
     "╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝"
 )
+
+
+class BlockBarColumn(ProgressColumn):
+    """A progress bar with solid teal fill and dotted teal background."""
+
+    def __init__(self, bar_width: int = 30) -> None:
+        super().__init__()
+        self.bar_width = bar_width
+
+    def render(self, task: RichTask) -> Text:
+        if not task.total:
+            return Text("\u2591" * self.bar_width, style=TEAL)
+        filled = int(self.bar_width * task.completed / task.total)
+        empty = self.bar_width - filled
+        bar = Text()
+        bar.append("\u2588" * filled, style=TEAL)
+        bar.append("\u2591" * empty, style=TEAL)
+        return bar
+
+
+def print_error(console: Console, text: str) -> None:
+    """Print a red error line: ``{cross} {text}``."""
+    txt = Text(f"\u2717 {text}", style=RED)
+    console.print(txt)
 
 
 def print_header(console: Console) -> None:
