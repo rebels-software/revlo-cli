@@ -1,4 +1,12 @@
-"""Specialist EE agent definitions for the Claude Agent SDK multi-agent dispatch."""
+"""Specialist EE agent definitions.
+
+The multi-agent Agent SDK dispatch has been replaced by a single direct
+Claude API call using the comprehensive ``ee_review.md`` system prompt.
+
+The old ``get_orchestrator_prompt()`` and ``get_all_agent_definitions()``
+functions are kept for backward compatibility but are no longer used by
+the review engine.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +15,7 @@ from typing import Any
 from revlo.skills import load_skill
 
 # ---------------------------------------------------------------------------
-# Agent name constants
+# Agent name constants (kept for backward compat / reference)
 # ---------------------------------------------------------------------------
 AGENT_NAMES = [
     "signal_integrity_review",
@@ -22,23 +30,33 @@ AGENT_NAMES = [
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+def get_ee_system_prompt() -> str:
+    """Return the comprehensive EE review system prompt."""
+    return load_skill("ee_review")
+
+
 def get_orchestrator_prompt() -> str:
-    """Return the Team Lead orchestrator system prompt."""
+    """Return the Team Lead orchestrator system prompt.
+
+    .. deprecated::
+        No longer used by the review engine. Kept for backward compatibility.
+    """
     return load_skill("orchestrator")
 
 
 def get_all_agent_definitions() -> dict[str, Any]:
-    """Build and return all specialist AgentDefinition objects.
+    """Build and return all specialist agent definition dicts.
 
-    Imports ``claude_agent_sdk`` lazily to avoid import errors when the
-    Claude Code CLI is not installed.
+    .. deprecated::
+        No longer used by the review engine. The Agent SDK multi-agent
+        dispatch has been replaced by a single direct Claude API call.
+        Kept for backward compatibility.
 
-    Each agent prompt = base_ee_knowledge + specialist skill.
+    Returns plain dicts instead of AgentDefinition objects to avoid
+    requiring the claude_agent_sdk dependency.
     """
-    from claude_agent_sdk import AgentDefinition
-
     base_prompt = load_skill("base_ee_knowledge")
-    definitions: dict[str, AgentDefinition] = {}
+    definitions: dict[str, dict[str, str]] = {}
 
     _AGENT_DESCRIPTIONS = {
         "signal_integrity_review": "Signal integrity specialist: pull-ups, termination, ESD, impedance",
@@ -51,10 +69,10 @@ def get_all_agent_definitions() -> dict[str, Any]:
 
     for name in AGENT_NAMES:
         specialist_prompt = load_skill(name)
-        definitions[name] = AgentDefinition(
-            description=_AGENT_DESCRIPTIONS[name],
-            prompt=base_prompt + "\n\n" + specialist_prompt,
-            model="sonnet",
-        )
+        definitions[name] = {
+            "description": _AGENT_DESCRIPTIONS[name],
+            "prompt": base_prompt + "\n\n" + specialist_prompt,
+            "model": "sonnet",
+        }
 
     return definitions

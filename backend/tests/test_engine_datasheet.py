@@ -1,7 +1,7 @@
 """Test suite for review engine datasheet specs integration (US-021).
 
 Tests that datasheet_specs parameter is accepted and specs are correctly injected
-into chunks before prompt generation. All agent SDK calls are fully mocked.
+into chunks before prompt generation. All Claude API calls are fully mocked.
 """
 
 from __future__ import annotations
@@ -166,8 +166,8 @@ def _make_multi_ic_schematic() -> ParsedSchematic:
     )
 
 
-async def _noop_review_chunk(chunk, orchestrator_prompt, agent_definitions):
-    """Mock _review_chunk_with_team that returns no findings."""
+async def _noop_review_with_ee_agent(chunks, system_prompt, model):
+    """Mock _review_with_ee_agent that returns no findings."""
     return []
 
 
@@ -179,13 +179,9 @@ class TestDatasheetSpecsParameter:
     async def test_accepts_none(self):
         schematic = _make_schematic()
 
-        with (
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_noop_review_chunk),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy"),
+        with patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_noop_review_with_ee_agent,
         ):
             report = await review_schematic(schematic, datasheet_specs=None)
 
@@ -205,13 +201,9 @@ class TestDatasheetSpecsParameter:
             )
         }
 
-        with (
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_noop_review_chunk),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy"),
+        with patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_noop_review_with_ee_agent,
         ):
             report = await review_schematic(schematic, datasheet_specs=specs)
 
@@ -228,12 +220,10 @@ class TestSpecInjectionIntoChunks:
 
         with (
             patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_noop_review_chunk),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy"),
+            patch(
+                "revlo.reviewer.engine._review_with_ee_agent",
+                side_effect=_noop_review_with_ee_agent,
+            ),
         ):
             from revlo.reviewer.chunker import ReviewChunk
 
@@ -261,12 +251,10 @@ class TestSpecInjectionIntoChunks:
 
         with (
             patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_noop_review_chunk),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy"),
+            patch(
+                "revlo.reviewer.engine._review_with_ee_agent",
+                side_effect=_noop_review_with_ee_agent,
+            ),
         ):
             from revlo.reviewer.chunker import ReviewChunk
 
@@ -292,12 +280,10 @@ class TestSpecInjectionIntoChunks:
 
         with (
             patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_noop_review_chunk),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy"),
+            patch(
+                "revlo.reviewer.engine._review_with_ee_agent",
+                side_effect=_noop_review_with_ee_agent,
+            ),
         ):
             from revlo.reviewer.chunker import ReviewChunk
 
@@ -331,12 +317,10 @@ class TestSpecInjectionIntoChunks:
 
         with (
             patch("revlo.reviewer.engine.chunk_schematic") as mock_chunk_schematic,
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_noop_review_chunk),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy"),
+            patch(
+                "revlo.reviewer.engine._review_with_ee_agent",
+                side_effect=_noop_review_with_ee_agent,
+            ),
         ):
             from revlo.reviewer.chunker import ReviewChunk
 

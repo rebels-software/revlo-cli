@@ -1,11 +1,10 @@
 """Test suite for the async review engine (US-010).
 
-All agent SDK calls are fully mocked -- no real API traffic.
+All Claude API calls are fully mocked -- no real API traffic.
 """
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 from unittest.mock import patch
 
@@ -120,13 +119,13 @@ def _make_schematic(**overrides) -> ParsedSchematic:
     return ParsedSchematic(**defaults)
 
 
-def _mock_review_chunk_with_team(findings_per_chunk: list[Finding] | None = None):
-    """Return a mock for _review_chunk_with_team that returns findings."""
-    if findings_per_chunk is None:
-        findings_per_chunk = [Finding(**_valid_finding_dict())]
+def _mock_review_with_ee_agent(findings: list[Finding] | None = None):
+    """Return a mock for _review_with_ee_agent that returns findings."""
+    if findings is None:
+        findings = [Finding(**_valid_finding_dict())]
 
-    async def _mock_impl(chunk, orchestrator_prompt, agent_definitions):
-        return list(findings_per_chunk)
+    async def _mock_impl(chunks, system_prompt, model):
+        return list(findings)
 
     return _mock_impl
 
@@ -155,17 +154,13 @@ class TestBuildSummary:
 class TestReviewSchematic:
     @pytest.mark.asyncio
     async def test_happy_path(self):
-        """Full flow: schematic -> chunks -> Team Lead agent -> report."""
+        """Full flow: schematic -> chunks -> EE agent -> report."""
         schematic = _make_schematic()
         findings = [Finding(**_valid_finding_dict())]
 
-        with (
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_mock_review_chunk_with_team(findings)),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy prompt"),
+        with patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_mock_review_with_ee_agent(findings),
         ):
             report = await review_schematic(schematic)
 
@@ -190,16 +185,12 @@ class TestReviewSchematic:
 
     @pytest.mark.asyncio
     async def test_agent_returns_empty_findings(self):
-        """Chunks where Team Lead returns no findings produce empty report."""
+        """EE agent returns no findings produces empty report."""
         schematic = _make_schematic()
 
-        with (
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_mock_review_chunk_with_team([])),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy prompt"),
+        with patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_mock_review_with_ee_agent([]),
         ):
             report = await review_schematic(schematic)
 
@@ -215,36 +206,14 @@ class TestReviewSchematic:
             Finding(**_valid_finding_dict(confidence=0.3)),
         ]
 
-        with (
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_mock_review_chunk_with_team(findings)),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy prompt"),
+        with patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_mock_review_with_ee_agent(findings),
         ):
             report = await review_schematic(schematic, min_confidence=0.5)
 
         for f in report.findings:
             assert f.confidence >= 0.5
-
-    @pytest.mark.asyncio
-    async def test_concurrent_execution(self):
-        """Verify chunks are processed concurrently via asyncio.gather."""
-        schematic = _make_schematic()
-
-        with (
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_mock_review_chunk_with_team([])),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy prompt"),
-            patch("revlo.reviewer.engine.asyncio.gather", wraps=asyncio.gather) as mock_gather,
-        ):
-            await review_schematic(schematic)
-
-        mock_gather.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_report_stats_computed(self):
@@ -256,13 +225,9 @@ class TestReviewSchematic:
             Finding(**_valid_finding_dict(severity="suggestion")),
         ]
 
-        with (
-            patch("revlo.reviewer.engine._review_chunk_with_team",
-                  side_effect=_mock_review_chunk_with_team(findings)),
-            patch("revlo.agents.definitions.get_all_agent_definitions",
-                  return_value={}),
-            patch("revlo.agents.definitions.get_orchestrator_prompt",
-                  return_value="dummy prompt"),
+        with patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_mock_review_with_ee_agent(findings),
         ):
             report = await review_schematic(schematic)
 

@@ -18,11 +18,11 @@ SPECIALIST_SKILLS = [
     "pcb_layout_review",
 ]
 
-ALL_SKILLS = ["base_ee_knowledge", "orchestrator", *SPECIALIST_SKILLS]
+ALL_SKILLS = ["base_ee_knowledge", "orchestrator", "ee_review", *SPECIALIST_SKILLS]
 
 
 def test_load_skill_returns_content():
-    """load_skill() returns non-empty content for all 8 skill files."""
+    """load_skill() returns non-empty content for all skill files."""
     for skill_name in ALL_SKILLS:
         content = load_skill(skill_name)
         assert isinstance(content, str)
@@ -100,3 +100,89 @@ def test_specialist_files_have_valid_json_examples():
             assert (
                 finding.recommendation.strip()
             ), f"{skill_name} example #{i+1} has empty recommendation"
+
+
+# ---------------------------------------------------------------------------
+# Comprehensive EE review prompt tests
+# ---------------------------------------------------------------------------
+class TestEEReviewSkill:
+    """Tests for the merged ee_review.md skill file."""
+
+    def test_ee_review_exists_and_loads(self):
+        """ee_review.md exists and loads successfully."""
+        content = load_skill("ee_review")
+        assert isinstance(content, str)
+        assert len(content) > 1000  # Should be a substantial file
+
+    def test_ee_review_contains_all_checklist_domains(self):
+        """ee_review.md contains checklist sections for all 6 specialist domains."""
+        content = load_skill("ee_review")
+
+        expected_sections = [
+            "Power Supply",
+            "Signal Integrity",
+            "IC Pin Configuration",
+            "Interface & Grounding",
+            "BOM & Lifecycle",
+            "PCB Layout Advisory",
+        ]
+        for section in expected_sections:
+            assert section in content, (
+                f"ee_review.md missing checklist section: {section}"
+            )
+
+    def test_ee_review_contains_fundamentals(self):
+        """ee_review.md contains EE fundamentals section."""
+        content = load_skill("ee_review")
+        assert "EE Fundamentals" in content
+        assert "Ohm's Law" in content
+        assert "Safety Margins" in content
+
+    def test_ee_review_contains_severity_guide(self):
+        """ee_review.md contains a severity guide."""
+        content = load_skill("ee_review")
+        assert "Severity Guide" in content
+        assert "error" in content
+        assert "warning" in content
+        assert "suggestion" in content
+
+    def test_ee_review_contains_output_format(self):
+        """ee_review.md contains output format instructions."""
+        content = load_skill("ee_review")
+        assert "Output Format" in content
+        assert "findings" in content
+        assert "severity" in content
+        assert "category" in content
+        assert "component_ref" in content
+        assert "confidence" in content
+
+    def test_ee_review_has_valid_json_examples(self):
+        """ee_review.md contains valid JSON example findings."""
+        content = load_skill("ee_review")
+
+        match = re.search(
+            r"## Example Findings\s+```json\s+(.*?)\s+```",
+            content,
+            re.DOTALL,
+        )
+        assert match, "ee_review.md has no JSON code block in Example Findings section"
+
+        json_text = match.group(1)
+        findings_data = json.loads(json_text)
+
+        assert isinstance(findings_data, list)
+        assert len(findings_data) >= 2  # At least 2 examples
+
+        for finding_dict in findings_data:
+            finding = Finding(**finding_dict)
+            assert finding.severity in {Severity.error, Severity.warning, Severity.suggestion}
+            assert finding.category in set(FindingCategory)
+            assert 0.0 <= finding.confidence <= 1.0
+
+    def test_ee_review_contains_finding_categories(self):
+        """ee_review.md lists all valid FindingCategory values."""
+        content = load_skill("ee_review")
+        for cat in FindingCategory:
+            assert cat.value in content, (
+                f"ee_review.md missing FindingCategory: {cat.value}"
+            )

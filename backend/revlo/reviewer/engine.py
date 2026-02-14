@@ -1,10 +1,11 @@
-"""Async review engine -- sends schematic chunks to the Team Lead agent for analysis."""
+"""Async review engine -- sends schematic chunks to the EE review agent via direct Claude API."""
 
 from __future__ import annotations
 
-import asyncio
 import datetime
+import json
 import logging
+import re
 from typing import Any
 
 from revlo.datasheet.models import DatasheetSpec
@@ -12,6 +13,7 @@ from revlo.parser.models import ParsedSchematic
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.reviewer.models import Finding, ReviewReport
 from revlo.reviewer.prompts import format_chunk_data
+from revlo.skills import load_skill
 
 logger = logging.getLogger(__name__)
 
@@ -19,88 +21,110 @@ MODEL_SONNET = "claude-sonnet-4-5-20250929"
 MODEL_OPUS = "claude-opus-4-6"
 DEFAULT_MODEL = MODEL_OPUS
 
-# ---------------------------------------------------------------------------
-# Output format schema for Agent SDK structured output
-# ---------------------------------------------------------------------------
-_FINDING_SCHEMA: dict[str, Any] = Finding.model_json_schema()
-
-_AGENT_OUTPUT_FORMAT: dict[str, Any] = {
-    "type": "json_schema",
-    "schema": {
-        "type": "object",
-        "properties": {
-            "findings": {
-                "type": "array",
-                "items": _FINDING_SCHEMA,
-            },
-        },
-        "required": ["findings"],
-    },
-}
-
 
 # ---------------------------------------------------------------------------
-# Team Lead agent dispatch
+# JSON extraction helper
 # ---------------------------------------------------------------------------
-async def _review_chunk_with_team(
-    chunk: ReviewChunk,
-    orchestrator_prompt: str,
-    agent_definitions: dict[str, Any],
+def _extract_json_from_response(text: str) -> Any:
+    """Extract a JSON object or array from an LLM response.
+
+    Handles responses that are:
+    - Pure JSON
+    - JSON wrapped in markdown code fences (```json ... ```)
+    """
+    # Try direct parse first.
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try extracting from markdown code fences.
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+
+    # Last resort: find the first { or [ and parse from there.
+    for start_char, end_char in [("{", "}"), ("[", "]")]:
+        start_idx = text.find(start_char)
+        if start_idx == -1:
+            continue
+        end_idx = text.rfind(end_char)
+        if end_idx == -1 or end_idx <= start_idx:
+            continue
+        try:
+            return json.loads(text[start_idx : end_idx + 1])
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# EE review agent dispatch (single call with all chunks)
+# ---------------------------------------------------------------------------
+async def _review_with_ee_agent(
+    chunks: list[ReviewChunk],
+    system_prompt: str,
+    model: str,
 ) -> list[Finding]:
-    """Dispatch a chunk to the Team Lead agent who delegates to specialists.
-
-    Imports ``claude_agent_sdk`` lazily so that the module can be loaded even
-    when the Claude Code CLI is not installed.
+    """Send all chunks to the EE review agent via direct Claude API call.
 
     Returns an empty list on any failure (logged as a warning).
     """
-    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+    import anthropic
 
-    chunk_text = format_chunk_data(chunk)
-    prompt = f"Review the following schematic chunk ({chunk.label}):\n\n{chunk_text}"
+    # Build a single prompt listing all chunks.
+    chunk_sections: list[str] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        chunk_text = format_chunk_data(chunk)
+        chunk_sections.append(
+            f"## Chunk {idx}: {chunk.label}\n\n{chunk_text}"
+        )
 
-    options = ClaudeAgentOptions(
-        system_prompt=orchestrator_prompt,
-        agents=agent_definitions,
-        output_format=_AGENT_OUTPUT_FORMAT,
-        max_turns=10,
-        permission_mode="bypassPermissions",
+    all_chunks_text = "\n\n".join(chunk_sections)
+    prompt = (
+        f"Review the following schematic with {len(chunks)} chunks:\n\n"
+        f"{all_chunks_text}"
     )
 
+    client = anthropic.AsyncAnthropic()
+
     try:
-        result_msg = None
-        async for msg in query(prompt=prompt, options=options):
-            if isinstance(msg, ResultMessage):
-                result_msg = msg
-                break
+        response = await client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=system_prompt,
+            messages=[{"role": "user", "content": prompt}],
+        )
 
-        if result_msg is None:
+        text = response.content[0].text
+        parsed = _extract_json_from_response(text)
+
+        if parsed is None:
             logger.warning(
-                "No ResultMessage from Team Lead for chunk %r, skipping",
-                chunk.label,
+                "Could not extract JSON from EE agent response, skipping",
             )
             return []
 
-        if result_msg.is_error:
+        # The response may be {"findings": [...]} or just [...]
+        if isinstance(parsed, dict):
+            raw_findings = parsed.get("findings", [])
+        elif isinstance(parsed, list):
+            raw_findings = parsed
+        else:
             logger.warning(
-                "Team Lead returned error for chunk %r, skipping",
-                chunk.label,
+                "Unexpected JSON type from EE agent: %s",
+                type(parsed).__name__,
             )
             return []
 
-        structured = result_msg.structured_output
-        if structured is None:
-            logger.warning(
-                "No structured output from Team Lead for chunk %r, skipping",
-                chunk.label,
-            )
-            return []
-
-        raw_findings = structured.get("findings", []) if isinstance(structured, dict) else []
         if not isinstance(raw_findings, list):
             logger.warning(
-                "Expected findings array from Team Lead for chunk %r, got %s",
-                chunk.label,
+                "Expected findings array from EE agent, got %s",
                 type(raw_findings).__name__,
             )
             return []
@@ -111,16 +135,14 @@ async def _review_chunk_with_team(
                 findings.append(Finding.model_validate(item))
             except Exception:
                 logger.warning(
-                    "Invalid finding from Team Lead for chunk %r, skipping: %s",
-                    chunk.label,
+                    "Invalid finding from EE agent, skipping: %s",
                     item,
                 )
         return findings
 
     except Exception:
         logger.warning(
-            "Agent SDK call failed for chunk %r, skipping",
-            chunk.label,
+            "EE agent API call failed, skipping",
             exc_info=True,
         )
         return []
@@ -144,18 +166,16 @@ async def review_schematic(
     datasheet_specs: dict[str, DatasheetSpec] | None = None,
     min_confidence: float = 0.5,
 ) -> ReviewReport:
-    """Review a parsed schematic by dispatching chunks to the Team Lead agent.
+    """Review a parsed schematic by sending all chunks to the EE review agent.
 
     1. Splits the schematic into ReviewChunks via ``chunk_schematic()``.
-    2. Loads the Team Lead orchestrator prompt and specialist definitions.
-    3. For each chunk, the Team Lead agent delegates to specialists and
-       returns deduplicated findings.
+    2. Loads the comprehensive EE system prompt from ``ee_review.md``.
+    3. Sends ALL chunks to the EE agent in a single direct Claude API call.
     4. Collects findings, filters by min_confidence, and returns a ReviewReport.
 
     Args:
         schematic: The parsed schematic to review.
-        model: Claude model ID (currently unused -- model selection is
-            handled by agent definitions).
+        model: Claude model ID. Defaults to ``DEFAULT_MODEL``.
         datasheet_specs: Optional mapping of component reference to
             :class:`DatasheetSpec`. When provided, matching specs are
             injected into each chunk before prompt generation.
@@ -185,28 +205,13 @@ async def review_schematic(
             review_date=datetime.date.today().isoformat(),
         )
 
-    # Load orchestrator prompt and agent definitions once.
-    from revlo.agents.definitions import (
-        get_all_agent_definitions,
-        get_orchestrator_prompt,
+    # Load the comprehensive EE system prompt.
+    ee_prompt = load_skill("ee_review")
+
+    # Dispatch ALL chunks to the EE agent in a single call.
+    all_findings = await _review_with_ee_agent(
+        chunks, ee_prompt, model or DEFAULT_MODEL
     )
-
-    orchestrator_prompt = get_orchestrator_prompt()
-    agent_defs = get_all_agent_definitions()
-
-    # Dispatch all chunks to the Team Lead concurrently.
-    tasks = [
-        asyncio.ensure_future(
-            _review_chunk_with_team(chunk, orchestrator_prompt, agent_defs)
-        )
-        for chunk in chunks
-    ]
-
-    results = await asyncio.gather(*tasks)
-
-    all_findings: list[Finding] = []
-    for chunk_findings in results:
-        all_findings.extend(chunk_findings)
 
     # Filter low-confidence findings.
     all_findings = [f for f in all_findings if f.confidence >= min_confidence]
