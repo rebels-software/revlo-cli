@@ -19,11 +19,21 @@ AMBER = "#FFB347"  # Warm Amber     -- warnings
 # Public helpers
 # ---------------------------------------------------------------------------
 
+LOGO = (
+    "██████╗ ███████╗██╗   ██╗██╗      ██████╗ \n"
+    "██╔══██╗██╔════╝██║   ██║██║     ██╔═══██╗\n"
+    "██████╔╝█████╗  ██║   ██║██║     ██║   ██║\n"
+    "██╔══██╗██╔══╝  ╚██╗ ██╔╝██║     ██║   ██║\n"
+    "██║  ██║███████╗ ╚████╔╝ ███████╗╚██████╔╝\n"
+    "╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝"
+)
+
+
 def print_header(console: Console) -> None:
     """Print the branded ASCII art header."""
     console.print()
-    console.print(f"  [bold {TEAL}]◆ Revlo[/]")
-    console.print("  [dim]AI-powered design review for KiCad schematics[/]")
+    console.print(LOGO, style=f"bold {TEAL}")
+    console.print("[dim]AI-powered design review for KiCad schematics[/]")
     console.print()
 
 

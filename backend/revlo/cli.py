@@ -26,6 +26,11 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="revlo",
         description="AI-powered design review for KiCad schematics",
     )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show detailed debug output (logging, API calls, timings)",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     review = subparsers.add_parser(
@@ -289,16 +294,18 @@ def main() -> None:
 
     load_dotenv()
 
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    log_level = logging.DEBUG if args.verbose else logging.WARNING
     logging.basicConfig(
-        level=logging.WARNING,
+        level=log_level,
         format="%(name)s: %(message)s",
         stream=sys.stderr,
     )
-    # Show progress for the datasheet pipeline.
-    logging.getLogger("revlo.datasheet.pipeline").setLevel(logging.INFO)
-
-    parser = _build_parser()
-    args = parser.parse_args()
+    if not args.verbose:
+        # Show progress for the datasheet pipeline even without --verbose.
+        logging.getLogger("revlo.datasheet.pipeline").setLevel(logging.INFO)
 
     if args.command == "review":
         _run_review(args)
