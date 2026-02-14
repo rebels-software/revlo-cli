@@ -5,8 +5,6 @@ from revlo.reviewer.engine import (
     DEFAULT_MODEL,
     MODEL_OPUS,
     MODEL_SONNET,
-    _deduplicate_findings,
-    _review_chunk_with_agent,
     review_schematic,
 )
 from revlo.reviewer.models import (
@@ -31,7 +29,5 @@ __all__ = [
     "build_review_prompt",
     "format_chunk_data",
     "chunk_schematic",
-    "_deduplicate_findings",
-    "_review_chunk_with_agent",
     "review_schematic",
 ]

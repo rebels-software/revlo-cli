@@ -72,13 +72,6 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="no_tui",
         help="Print styled summary and finding cards to stderr, then exit (no TUI)",
     )
-    review.add_argument(
-        "--no-agents",
-        action="store_true",
-        dest="no_agents",
-        help="Skip Agent SDK dispatch, use direct Anthropic API calls",
-    )
-
     # -- open subcommand: view last stored review --
     open_cmd = subparsers.add_parser(
         "open",
@@ -188,7 +181,6 @@ def _run_review(args: argparse.Namespace) -> None:
                         model=model,
                         datasheet_specs=datasheet_specs,
                         min_confidence=args.min_confidence,
-                        use_agents=not args.no_agents,
                     )
                 )
         else:
@@ -198,7 +190,6 @@ def _run_review(args: argparse.Namespace) -> None:
                     model=model,
                     datasheet_specs=datasheet_specs,
                     min_confidence=args.min_confidence,
-                    use_agents=not args.no_agents,
                 )
             )
     except Exception as exc:

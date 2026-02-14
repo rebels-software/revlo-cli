@@ -1,14 +1,10 @@
-"""Specialist EE agent definitions and chunk-to-agent routing logic."""
+"""Specialist EE agent definitions for the Claude Agent SDK multi-agent dispatch."""
 
 from __future__ import annotations
 
-import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from revlo.skills import load_skill
-
-if TYPE_CHECKING:
-    from revlo.reviewer.chunker import ReviewChunk
 
 # ---------------------------------------------------------------------------
 # Agent name constants
@@ -22,54 +18,13 @@ AGENT_NAMES = [
     "pcb_layout_review",
 ]
 
-# IC-context chunks always go to these agents.
-_IC_ALWAYS = ["signal_integrity_review", "ic_pin_config_review", "bom_lifecycle_review"]
-
-# Power-rail chunks always go to these agents.
-_POWER_ALWAYS = ["power_supply_review", "pcb_layout_review"]
-
-# ---------------------------------------------------------------------------
-# Interface-net detection patterns (case-insensitive)
-# ---------------------------------------------------------------------------
-_INTERFACE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"USB|D\+|D-|DP|DM", re.IGNORECASE),
-    re.compile(r"I2C|SDA|SCL", re.IGNORECASE),
-    re.compile(r"SPI|MOSI|MISO|SCK|SCLK|CS", re.IGNORECASE),
-    re.compile(r"CAN|CANH|CANL", re.IGNORECASE),
-    re.compile(r"UART|TX|RX|TXD|RXD", re.IGNORECASE),
-]
-
-
-def _has_interface_nets(chunk: ReviewChunk) -> bool:
-    """Return True if any net name in the chunk matches an interface pattern."""
-    for net in chunk.nets:
-        for pattern in _INTERFACE_PATTERNS:
-            if pattern.search(net.name):
-                return True
-    return False
-
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def get_agents_for_chunk(chunk: ReviewChunk) -> list[str]:
-    """Return the list of specialist agent names that should review *chunk*.
-
-    Routing rules (from orchestrator.md):
-    - ic_context -> signal_integrity, ic_pin_config, bom_lifecycle
-                    + interface_grounding if interface nets detected
-    - power_rail -> power_supply, pcb_layout
-    """
-    if chunk.chunk_type == "ic_context":
-        agents = list(_IC_ALWAYS)
-        if _has_interface_nets(chunk):
-            agents.append("interface_grounding_review")
-        return agents
-    elif chunk.chunk_type == "power_rail":
-        return list(_POWER_ALWAYS)
-    else:
-        # Unknown chunk type -- return empty so caller can fall back.
-        return []
+def get_orchestrator_prompt() -> str:
+    """Return the Team Lead orchestrator system prompt."""
+    return load_skill("orchestrator")
 
 
 def get_all_agent_definitions() -> dict[str, Any]:
