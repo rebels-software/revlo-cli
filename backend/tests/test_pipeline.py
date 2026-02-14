@@ -416,8 +416,12 @@ async def test_mixed_generic_cached_resolved(
     mock_cache_instance.get.side_effect = cache_get_side_effect
     mock_cache_class.return_value = mock_cache_instance
 
-    # Mock pipeline for U2.
-    pdf_path = tmp_path / "lm358.pdf"
+    # Mock pipeline for U2.  Place the PDF in a subdirectory so that
+    # _find_manual_pdf does not pick it up via reverse-substring matching
+    # (the stem "lm358" would match MPN "LM358P").
+    dl_dir = tmp_path / "_downloads"
+    dl_dir.mkdir()
+    pdf_path = dl_dir / "d41d8cd9.pdf"
     pdf_path.write_text("fake")
 
     mock_resolve.return_value = "https://example.com/lm358.pdf"

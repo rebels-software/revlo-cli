@@ -151,6 +151,33 @@ class TestFindManualPdf:
         result = _find_manual_pdf("STM32F103C8T6", tmp_path)
         assert result is None
 
+    def test_segment_match_rescue_lib_id(self, tmp_path: Path) -> None:
+        """Matches when a hyphen-separated segment of MPN appears in filename."""
+        pdf = tmp_path / "stm32f103tb.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+
+        # MPN from rescue lib_id: segment 'STM32F103CBTx' doesn't match
+        # but segment 'STM32F1' does appear in the filename.
+        result = _find_manual_pdf("STM32F103CBTx-MCU_ST_STM32F1", tmp_path)
+        assert result == pdf
+
+    def test_reverse_substring_match(self, tmp_path: Path) -> None:
+        """Matches when the PDF stem is a substring of the MPN."""
+        pdf = tmp_path / "stm32f103.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+
+        result = _find_manual_pdf("STM32F103CBTx", tmp_path)
+        assert result == pdf
+
+    def test_short_segments_skipped(self, tmp_path: Path) -> None:
+        """Segments shorter than 4 chars are not matched to avoid false positives."""
+        pdf = tmp_path / "random-st-data.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+
+        # 'ST' is a 2-char segment so should NOT match via segment strategy
+        result = _find_manual_pdf("LM7805-ST", tmp_path)
+        assert result is None
+
 
 # ---------------------------------------------------------------------------
 # Progress callback in enrich_schematic
@@ -384,3 +411,183 @@ class TestManualPdfFallback:
         cache_instance.put.assert_called_once()
         entry = cache_instance.put.call_args[0][1]
         assert entry.source_url == ""
+
+
+# ---------------------------------------------------------------------------
+# Status callback in enrich_schematic
+# ---------------------------------------------------------------------------
+class TestStatusCallback:
+    """Tests for the status_callback parameter."""
+
+    @patch("revlo.datasheet.pipeline.normalize_part")
+    @patch("revlo.datasheet.pipeline.DatasheetCache")
+    def test_status_cached_on_cache_hit(
+        self,
+        MockCache: MagicMock,
+        mock_normalize: MagicMock,
+        simple_schematic: ParsedSchematic,
+        non_generic_part: NormalizedPartNumber,
+        mock_spec: DatasheetSpec,
+        tmp_path: Path,
+    ) -> None:
+        """status_callback receives 'cached' on cache hit."""
+        mock_normalize.return_value = non_generic_part
+        cache_instance = MockCache.return_value
+        cache_instance.get.return_value = DatasheetCacheEntry(
+            mpn="STM32F103C8T6", spec=mock_spec,
+        )
+
+        statuses: list[tuple[str, str, str]] = []
+
+        def on_status(ref: str, mpn: str, source: str) -> None:
+            statuses.append((ref, mpn, source))
+
+        asyncio.run(
+            enrich_schematic(
+                simple_schematic, tmp_path, status_callback=on_status,
+            )
+        )
+
+        assert ("U1", "STM32F103C8T6", "cached") in statuses
+
+    @patch("revlo.datasheet.pipeline.extract_spec", new_callable=AsyncMock)
+    @patch("revlo.datasheet.pipeline.extract_text")
+    @patch("revlo.datasheet.pipeline.normalize_part")
+    @patch("revlo.datasheet.pipeline.DatasheetCache")
+    def test_status_manual_on_manual_pdf(
+        self,
+        MockCache: MagicMock,
+        mock_normalize: MagicMock,
+        mock_extract_text: MagicMock,
+        mock_extract_spec: AsyncMock,
+        simple_schematic: ParsedSchematic,
+        non_generic_part: NormalizedPartNumber,
+        mock_spec: DatasheetSpec,
+        tmp_path: Path,
+    ) -> None:
+        """status_callback receives 'manual' when manual PDF is found."""
+        pdf_file = tmp_path / "stm32f103c8t6.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4 fake")
+
+        mock_normalize.return_value = non_generic_part
+        cache_instance = MockCache.return_value
+        cache_instance.get.return_value = None
+
+        mock_extract_text.return_value = "PDF text"
+        mock_extract_spec.return_value = mock_spec
+
+        statuses: list[tuple[str, str, str]] = []
+
+        def on_status(ref: str, mpn: str, source: str) -> None:
+            statuses.append((ref, mpn, source))
+
+        asyncio.run(
+            enrich_schematic(
+                simple_schematic, tmp_path, status_callback=on_status,
+            )
+        )
+
+        assert ("U1", "STM32F103C8T6", "manual") in statuses
+
+    @patch("revlo.datasheet.pipeline.extract_spec", new_callable=AsyncMock)
+    @patch("revlo.datasheet.pipeline.extract_text")
+    @patch("revlo.datasheet.pipeline.download_pdf", new_callable=AsyncMock)
+    @patch("revlo.datasheet.pipeline.resolve_datasheet_url", new_callable=AsyncMock)
+    @patch("revlo.datasheet.pipeline.normalize_part")
+    @patch("revlo.datasheet.pipeline.DatasheetCache")
+    def test_status_fetched_on_download(
+        self,
+        MockCache: MagicMock,
+        mock_normalize: MagicMock,
+        mock_resolve: AsyncMock,
+        mock_download: AsyncMock,
+        mock_extract_text: MagicMock,
+        mock_extract_spec: AsyncMock,
+        simple_schematic: ParsedSchematic,
+        non_generic_part: NormalizedPartNumber,
+        mock_spec: DatasheetSpec,
+        tmp_path: Path,
+    ) -> None:
+        """status_callback receives 'fetched' after successful download."""
+        mock_normalize.return_value = non_generic_part
+        cache_instance = MockCache.return_value
+        cache_instance.get.return_value = None
+
+        mock_resolve.return_value = "https://example.com/ds.pdf"
+        mock_download.return_value = tmp_path / "ds.pdf"
+        mock_extract_text.return_value = "PDF text"
+        mock_extract_spec.return_value = mock_spec
+
+        statuses: list[tuple[str, str, str]] = []
+
+        def on_status(ref: str, mpn: str, source: str) -> None:
+            statuses.append((ref, mpn, source))
+
+        asyncio.run(
+            enrich_schematic(
+                simple_schematic, tmp_path, status_callback=on_status,
+            )
+        )
+
+        assert ("U1", "STM32F103C8T6", "fetched") in statuses
+
+    @patch("revlo.datasheet.pipeline.resolve_datasheet_url", new_callable=AsyncMock)
+    @patch("revlo.datasheet.pipeline.normalize_part")
+    @patch("revlo.datasheet.pipeline.DatasheetCache")
+    def test_status_failed_on_no_url(
+        self,
+        MockCache: MagicMock,
+        mock_normalize: MagicMock,
+        mock_resolve: AsyncMock,
+        simple_schematic: ParsedSchematic,
+        non_generic_part: NormalizedPartNumber,
+        tmp_path: Path,
+    ) -> None:
+        """status_callback receives 'failed' when URL resolution fails."""
+        mock_normalize.return_value = non_generic_part
+        cache_instance = MockCache.return_value
+        cache_instance.get.return_value = None
+
+        mock_resolve.return_value = None
+
+        statuses: list[tuple[str, str, str]] = []
+        errors: list[tuple[str, str]] = []
+
+        def on_status(ref: str, mpn: str, source: str) -> None:
+            statuses.append((ref, mpn, source))
+
+        def on_error(ref: str, msg: str) -> None:
+            errors.append((ref, msg))
+
+        asyncio.run(
+            enrich_schematic(
+                simple_schematic, tmp_path,
+                error_callback=on_error,
+                status_callback=on_status,
+            )
+        )
+
+        assert ("U1", "STM32F103C8T6", "failed") in statuses
+        # error_callback should still be called as well
+        assert len(errors) == 1
+
+    @patch("revlo.datasheet.pipeline.normalize_part")
+    @patch("revlo.datasheet.pipeline.DatasheetCache")
+    def test_no_status_callback_does_not_error(
+        self,
+        MockCache: MagicMock,
+        mock_normalize: MagicMock,
+        simple_schematic: ParsedSchematic,
+        non_generic_part: NormalizedPartNumber,
+        tmp_path: Path,
+    ) -> None:
+        """Omitting status_callback does not raise."""
+        mock_normalize.return_value = non_generic_part
+        cache_instance = MockCache.return_value
+        cache_instance.get.return_value = DatasheetCacheEntry(
+            mpn="STM32F103C8T6", spec=DatasheetSpec(mpn="STM32F103C8T6"),
+        )
+
+        # Should not raise without status_callback
+        result = asyncio.run(enrich_schematic(simple_schematic, tmp_path))
+        assert isinstance(result, dict)

@@ -17,8 +17,9 @@ from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
 from revlo.reviewer import MODEL_OPUS, MODEL_SONNET, review_schematic
 from revlo.ui import (
+    AMBER,
     TEAL,
-    BlockBarColumn,
+    BenDayDotsColumn,
     print_error,
     print_finding_cards,
     print_header,
@@ -160,9 +161,13 @@ def _run_review(args: argparse.Namespace) -> None:
 
             cache_dir = Path(path).parent / "datasheets"
             if show_rich:
+                ds_counts: dict[str, int] = {
+                    "cached": 0, "manual": 0, "fetched": 0, "failed": 0,
+                }
+
                 with Progress(
                     TextColumn(f"[{TEAL}]\u25A0 Fetching datasheets..."),
-                    BlockBarColumn(bar_width=30),
+                    BenDayDotsColumn(bar_width=30),
                     TextColumn(f"[{TEAL}]{{task.completed}}/{{task.total}}"),
                     console=console,
                     transient=True,
@@ -174,8 +179,27 @@ def _run_review(args: argparse.Namespace) -> None:
 
                     def _on_error(ref: str, msg: str) -> None:
                         progress.console.print(
-                            f"  [{TEAL}]{ref}[/]: [bold #FF4757]{msg}[/]"
+                            f"  [{TEAL}]{ref}[/]: [{AMBER}]{msg}[/]"
                         )
+
+                    def _on_status(ref: str, mpn: str, source: str) -> None:
+                        ds_counts[source] = ds_counts.get(source, 0) + 1
+                        if source == "cached":
+                            progress.console.print(
+                                f"  [{TEAL} dim]{ref}: {mpn} (cached)[/]"
+                            )
+                        elif source == "manual":
+                            progress.console.print(
+                                f"  [{TEAL}]{ref}: {mpn} (manual PDF)[/]"
+                            )
+                        elif source == "fetched":
+                            progress.console.print(
+                                f"  [{TEAL}]{ref}: {mpn} (fetched)[/]"
+                            )
+                        elif source == "failed":
+                            progress.console.print(
+                                f"  [{AMBER}]{ref}: Could not fetch datasheet for {mpn}[/]"
+                            )
 
                     datasheet_specs = asyncio.run(
                         enrich_schematic(
@@ -183,8 +207,24 @@ def _run_review(args: argparse.Namespace) -> None:
                             cache_dir,
                             progress_callback=_on_progress,
                             error_callback=_on_error,
+                            status_callback=_on_status,
                         )
                     )
+
+                # Print summary after progress bar completes.
+                parts = []
+                for key in ("cached", "manual", "fetched"):
+                    if ds_counts[key] > 0:
+                        parts.append(f"{ds_counts[key]} {key}")
+                failed_count = ds_counts["failed"]
+                if failed_count > 0:
+                    parts.append(f"[{AMBER}]{failed_count} failed[/]")
+                else:
+                    parts.append("0 failed")
+                summary_text = ", ".join(parts)
+                console.print(
+                    f"[{TEAL}]\u25A0 Datasheets: {summary_text}[/]"
+                )
             else:
                 datasheet_specs = asyncio.run(
                     enrich_schematic(parsed, cache_dir)

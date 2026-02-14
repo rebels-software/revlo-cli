@@ -157,6 +157,9 @@ def test_enrichment_pipeline_called_by_default(
     cache_dir = call_args[0][1]
     assert isinstance(cache_dir, Path)
     assert cache_dir.name == "datasheets"
+    # Verify status_callback is passed
+    assert "status_callback" in call_args.kwargs
+    assert callable(call_args.kwargs["status_callback"])
 
     # Verify review_schematic was called with datasheet_specs
     assert mock_asyncio_run.call_count == 2
