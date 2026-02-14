@@ -190,7 +190,7 @@ class TestDatasheetSpecsParameter:
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = AsyncMock(return_value=response)
-            report = await review_schematic(schematic, datasheet_specs=None)
+            report = await review_schematic(schematic, datasheet_specs=None, use_agents=False)
 
         assert isinstance(report, ReviewReport)
         assert report.findings == []
@@ -212,7 +212,7 @@ class TestDatasheetSpecsParameter:
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = AsyncMock(return_value=response)
-            report = await review_schematic(schematic, datasheet_specs=specs)
+            report = await review_schematic(schematic, datasheet_specs=specs, use_agents=False)
 
         assert isinstance(report, ReviewReport)
 
@@ -251,7 +251,7 @@ class TestSpecInjectionIntoChunks:
             mock_chunk_schematic.return_value = [test_chunk]
             mock_review_chunk.return_value = []
 
-            await review_schematic(schematic, datasheet_specs=None)
+            await review_schematic(schematic, datasheet_specs=None, use_agents=False)
 
             # Verify chunk still has empty datasheet_specs
             assert test_chunk.datasheet_specs == {}
@@ -285,7 +285,7 @@ class TestSpecInjectionIntoChunks:
             mock_chunk_schematic.return_value = [test_chunk]
             mock_review_chunk.return_value = []
 
-            await review_schematic(schematic, datasheet_specs=specs)
+            await review_schematic(schematic, datasheet_specs=specs, use_agents=False)
 
             # Verify U1's spec was injected
             assert "U1" in test_chunk.datasheet_specs
@@ -321,7 +321,7 @@ class TestSpecInjectionIntoChunks:
             mock_chunk_schematic.return_value = [chunk_u1, chunk_u2]
             mock_review_chunk.return_value = []
 
-            await review_schematic(schematic, datasheet_specs=specs)
+            await review_schematic(schematic, datasheet_specs=specs, use_agents=False)
 
             # Verify each chunk only has its own spec
             assert "U1" in chunk_u1.datasheet_specs
@@ -359,7 +359,7 @@ class TestSpecInjectionIntoChunks:
             mock_chunk_schematic.return_value = [chunk]
             mock_review_chunk.return_value = []
 
-            await review_schematic(schematic, datasheet_specs=specs)
+            await review_schematic(schematic, datasheet_specs=specs, use_agents=False)
 
             # Verify both U1 and C1 specs are in the chunk
             assert "U1" in chunk.datasheet_specs

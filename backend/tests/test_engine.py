@@ -296,7 +296,7 @@ class TestReviewSchematic:
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = mock_create
-            report = await review_schematic(schematic)
+            report = await review_schematic(schematic, use_agents=False)
 
         assert isinstance(report, ReviewReport)
         assert len(report.findings) > 0
@@ -314,7 +314,7 @@ class TestReviewSchematic:
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             mock_create = AsyncMock()
             MockClient.return_value.messages.create = mock_create
-            report = await review_schematic(schematic)
+            report = await review_schematic(schematic, use_agents=False)
 
         assert isinstance(report, ReviewReport)
         assert report.findings == []
@@ -336,7 +336,7 @@ class TestReviewSchematic:
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = mock_create
             with caplog.at_level(logging.WARNING):
-                report = await review_schematic(schematic)
+                report = await review_schematic(schematic, use_agents=False)
 
         assert report.findings == []
         assert "0 issues" in report.summary
@@ -362,7 +362,7 @@ class TestReviewSchematic:
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = AsyncMock(side_effect=side_effect)
             with caplog.at_level(logging.WARNING):
-                report = await review_schematic(schematic)
+                report = await review_schematic(schematic, use_agents=False)
 
         # At least one finding from the valid response
         assert len(report.findings) >= 1
@@ -379,7 +379,7 @@ class TestReviewSchematic:
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = mock_create
-            await review_schematic(schematic)
+            await review_schematic(schematic, use_agents=False)
 
         # Check that every call used the default model
         for call in mock_create.call_args_list:
@@ -394,7 +394,7 @@ class TestReviewSchematic:
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = mock_create
-            await review_schematic(schematic)
+            await review_schematic(schematic, use_agents=False)
 
         for call in mock_create.call_args_list:
             messages = call.kwargs["messages"]
@@ -411,7 +411,7 @@ class TestReviewSchematic:
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = mock_create
-            await review_schematic(schematic)
+            await review_schematic(schematic, use_agents=False)
 
         for call in mock_create.call_args_list:
             # tools must be provided
@@ -436,7 +436,7 @@ class TestReviewSchematic:
             patch("revlo.reviewer.engine.asyncio.gather", wraps=asyncio.gather) as mock_gather,
         ):
             MockClient.return_value.messages.create = mock_create
-            await review_schematic(schematic)
+            await review_schematic(schematic, use_agents=False)
 
         # gather should be called once with all chunk coroutines
         mock_gather.assert_called_once()
@@ -455,7 +455,7 @@ class TestReviewSchematic:
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = mock_create
-            report = await review_schematic(schematic)
+            report = await review_schematic(schematic, use_agents=False)
 
         # Stats come from findings across all chunks
         assert report.stats.total == len(report.findings)
@@ -470,7 +470,7 @@ class TestReviewSchematic:
 
         with patch("revlo.reviewer.engine.anthropic.AsyncAnthropic") as MockClient:
             MockClient.return_value.messages.create = mock_create
-            await review_schematic(schematic)
+            await review_schematic(schematic, use_agents=False)
 
         for call in mock_create.call_args_list:
             assert "max_tokens" in call.kwargs

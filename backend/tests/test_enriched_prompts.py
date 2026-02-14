@@ -3,7 +3,7 @@
 from revlo.datasheet.models import DatasheetSpec, PinFunction
 from revlo.parser.models import ParsedComponent
 from revlo.reviewer.chunker import ReviewChunk
-from revlo.reviewer.prompts import build_review_prompt, _format_chunk_data
+from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
 
 
 # ---------------------------------------------------------------------------
@@ -31,12 +31,12 @@ class TestReviewChunkDatasheetSpecs:
 
 
 # ---------------------------------------------------------------------------
-# Test _format_chunk_data with datasheet specs
+# Test format_chunk_data with datasheet specs
 # ---------------------------------------------------------------------------
 class TestFormatChunkDataWithSpecs:
-    """Test that _format_chunk_data renders datasheet spec section correctly."""
+    """Test that format_chunk_data renders datasheet spec section correctly."""
 
-    def test_format_chunk_data_no_specs(self):
+    def testformat_chunk_data_no_specs(self):
         """No datasheet section when datasheet_specs is empty."""
         chunk = ReviewChunk(
             chunk_type="ic_context",
@@ -45,10 +45,10 @@ class TestFormatChunkDataWithSpecs:
                 ParsedComponent(reference="U1", value="STM32", lib_id="MCU:STM32")
             ],
         )
-        output = _format_chunk_data(chunk)
+        output = format_chunk_data(chunk)
         assert "## Datasheet Specifications" not in output
 
-    def test_format_chunk_data_with_minimal_spec(self):
+    def testformat_chunk_data_with_minimal_spec(self):
         """Datasheet section appears with minimal spec (only mpn)."""
         spec = DatasheetSpec(mpn="LM358")
         chunk = ReviewChunk(
@@ -56,11 +56,11 @@ class TestFormatChunkDataWithSpecs:
             label="U2 - LM358",
             datasheet_specs={"U2": spec},
         )
-        output = _format_chunk_data(chunk)
+        output = format_chunk_data(chunk)
         assert "## Datasheet Specifications" in output
         assert "### U2: LM358" in output
 
-    def test_format_chunk_data_with_full_spec(self):
+    def testformat_chunk_data_with_full_spec(self):
         """Datasheet section includes all fields when populated."""
         spec = DatasheetSpec(
             mpn="STM32F103CBT6",
@@ -86,7 +86,7 @@ class TestFormatChunkDataWithSpecs:
             label="U1 - STM32",
             datasheet_specs={"U1": spec},
         )
-        output = _format_chunk_data(chunk)
+        output = format_chunk_data(chunk)
         assert "## Datasheet Specifications" in output
         assert "### U1: STM32F103CBT6" in output
         assert "- Manufacturer: STMicroelectronics" in output
@@ -102,7 +102,7 @@ class TestFormatChunkDataWithSpecs:
         assert "- Notes:" in output
         assert "  - Requires external HSE crystal for USB" in output
 
-    def test_format_chunk_data_partial_voltage_range(self):
+    def testformat_chunk_data_partial_voltage_range(self):
         """Datasheet section renders '?' for missing voltage bounds."""
         spec_min_only = DatasheetSpec(mpn="PART1", supply_voltage_min=1.8)
         chunk = ReviewChunk(
@@ -110,7 +110,7 @@ class TestFormatChunkDataWithSpecs:
             label="U1 - PART1",
             datasheet_specs={"U1": spec_min_only},
         )
-        output = _format_chunk_data(chunk)
+        output = format_chunk_data(chunk)
         assert "- Supply Voltage: 1.8V to ?V" in output
 
         spec_max_only = DatasheetSpec(mpn="PART2", supply_voltage_max=5.5)
@@ -119,10 +119,10 @@ class TestFormatChunkDataWithSpecs:
             label="U2 - PART2",
             datasheet_specs={"U2": spec_max_only},
         )
-        output2 = _format_chunk_data(chunk2)
+        output2 = format_chunk_data(chunk2)
         assert "- Supply Voltage: ?V to 5.5V" in output2
 
-    def test_format_chunk_data_multiple_specs_sorted(self):
+    def testformat_chunk_data_multiple_specs_sorted(self):
         """Multiple component specs are rendered sorted by reference."""
         spec_u1 = DatasheetSpec(mpn="IC1")
         spec_u3 = DatasheetSpec(mpn="IC3")
@@ -132,7 +132,7 @@ class TestFormatChunkDataWithSpecs:
             label="Power Rail: VCC",
             datasheet_specs={"U1": spec_u1, "U3": spec_u3, "U2": spec_u2},
         )
-        output = _format_chunk_data(chunk)
+        output = format_chunk_data(chunk)
         # Check that U1, U2, U3 appear in order
         u1_idx = output.find("### U1: IC1")
         u2_idx = output.find("### U2: IC2")

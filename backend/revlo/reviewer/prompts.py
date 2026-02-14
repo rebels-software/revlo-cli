@@ -42,7 +42,7 @@ _POWER_RAIL_CHECKLIST = """\
 # ---------------------------------------------------------------------------
 # Chunk-data serialiser
 # ---------------------------------------------------------------------------
-def _format_chunk_data(chunk: ReviewChunk) -> str:
+def format_chunk_data(chunk: ReviewChunk) -> str:
     """Serialize chunk data into human-readable text for embedding in a prompt."""
     sections: list[str] = []
 
@@ -140,7 +140,7 @@ If datasheet specifications are provided above, use them to verify:
 
 def _build_ic_context_prompt(chunk: ReviewChunk) -> str:
     """Build a review prompt for an IC-context chunk."""
-    chunk_data = _format_chunk_data(chunk)
+    chunk_data = format_chunk_data(chunk)
     datasheet_instruction = _DATASHEET_VERIFICATION_INSTRUCTION if chunk.datasheet_specs else ""
 
     return f"""\
@@ -189,7 +189,7 @@ exclusively on hardware design issues."""
 
 def _build_power_rail_prompt(chunk: ReviewChunk) -> str:
     """Build a review prompt for a power-rail chunk."""
-    chunk_data = _format_chunk_data(chunk)
+    chunk_data = format_chunk_data(chunk)
     datasheet_instruction = _DATASHEET_VERIFICATION_INSTRUCTION if chunk.datasheet_specs else ""
 
     return f"""\

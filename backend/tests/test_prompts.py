@@ -11,7 +11,7 @@ from revlo.parser.models import (
     PinConnection,
 )
 from revlo.reviewer.chunker import ReviewChunk
-from revlo.reviewer.prompts import build_review_prompt, _format_chunk_data
+from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
 
 
 # ---------------------------------------------------------------------------
@@ -157,11 +157,11 @@ class TestPowerRailPrompt:
 # ---------------------------------------------------------------------------
 class TestFormatChunkData:
     def test_empty_chunk(self):
-        result = _format_chunk_data(ReviewChunk(chunk_type="ic_context", label="Empty"))
+        result = format_chunk_data(ReviewChunk(chunk_type="ic_context", label="Empty"))
         assert result == ""
 
     def test_all_sections(self, ic_chunk):
-        result = _format_chunk_data(ic_chunk)
+        result = format_chunk_data(ic_chunk)
         assert "## Components" in result
         assert "## Nets" in result
         assert "[POWER]" in result
@@ -171,7 +171,7 @@ class TestFormatChunkData:
     def test_properties_included(self):
         comp = ParsedComponent(reference="U1", value="STM32", lib_id="MCU:STM32", properties={"DNP": "false"})
         chunk = ReviewChunk(chunk_type="ic_context", label="Test", components=[comp])
-        assert "Properties:" in _format_chunk_data(chunk)
+        assert "Properties:" in format_chunk_data(chunk)
 
 
 # ---------------------------------------------------------------------------
