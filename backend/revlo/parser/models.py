@@ -41,6 +41,7 @@ class ParsedNet(BaseModel):
 class ParsedSheet(BaseModel):
     name: str
     filename: str
+    uuid: str = ""
     pins: list[dict[str, str]] = Field(default_factory=list)
 
 

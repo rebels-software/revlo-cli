@@ -166,7 +166,9 @@ def _load_sub_sheets(
             continue
 
         sub_components, sub_power = _extract_components(
-            sub_sch, source_sheet=sheet.name,
+            sub_sch,
+            source_sheet=sheet.name,
+            sheet_instance_uuid=sheet.uuid,
         )
         all_components.extend(sub_components)
         all_power_symbols.extend(sub_power)
@@ -223,9 +225,48 @@ def _extract_properties(raw_props: dict | None) -> dict[str, str]:
     return result
 
 
+def _resolve_instance_reference(
+    comp: ksa.Component,
+    sheet_instance_uuid: str,
+) -> str:
+    """Resolve a component's annotated reference from its hierarchical instances.
+
+    KiCad stores annotated references (e.g. ``U1``, ``C5``) in the
+    ``instances`` section of each component.  The correct instance for a
+    sub-sheet is the one whose ``.path`` ends with ``/<sheet_uuid>``.
+
+    Args:
+        comp: A kicad-sch-api Component object.
+        sheet_instance_uuid: The UUID of the hierarchical sheet that contains
+            this component.  Empty string means "do not resolve".
+
+    Returns:
+        The resolved reference string, or the component's default reference
+        if no matching instance is found.
+    """
+    if not sheet_instance_uuid:
+        return comp.reference
+
+    suffix = f"/{sheet_instance_uuid}"
+    try:
+        instances = comp._data.instances
+    except AttributeError:
+        return comp.reference
+
+    if not instances:
+        return comp.reference
+
+    for inst in instances:
+        if inst.path.endswith(suffix):
+            return inst.reference
+
+    return comp.reference
+
+
 def _extract_components(
     sch: ksa.Schematic,
     source_sheet: str = "",
+    sheet_instance_uuid: str = "",
 ) -> tuple[list[ParsedComponent], list[ParsedComponent]]:
     """Extract components and separate power symbols.
 
@@ -233,6 +274,11 @@ def _extract_components(
         sch: A loaded kicad_sch_api Schematic instance.
         source_sheet: Name of the sheet these components belong to.
             Empty string means root sheet.
+        sheet_instance_uuid: UUID of the hierarchical sheet instance.
+            When provided, component references are resolved from the
+            ``instances`` section of the KiCad file so that sub-sheet
+            components get their annotated designators (e.g. ``U1``
+            instead of ``U?``).
 
     Returns:
         A tuple of (regular_components, power_symbols).
@@ -241,10 +287,11 @@ def _extract_components(
     power_symbols: list[ParsedComponent] = []
 
     for comp in sch.components:
+        resolved_ref = _resolve_instance_reference(comp, sheet_instance_uuid)
         pins = _extract_pins(sch, comp)
 
         parsed = ParsedComponent(
-            reference=comp.reference,
+            reference=resolved_ref,
             value=comp.value,
             lib_id=comp.lib_id,
             footprint=comp.footprint or "",
@@ -255,7 +302,7 @@ def _extract_components(
             source_sheet=source_sheet,
         )
 
-        if comp.reference.startswith("#PWR"):
+        if resolved_ref.startswith("#PWR"):
             power_symbols.append(parsed)
         else:
             components.append(parsed)
@@ -309,6 +356,7 @@ def _extract_sheets(sch: ksa.Schematic) -> list[ParsedSheet]:
     for sheet_data in raw_sheets:
         name = sheet_data.get("name", "")
         filename = sheet_data.get("filename", "")
+        uuid = sheet_data.get("uuid", "")
         raw_pins = sheet_data.get("pins", [])
 
         # Normalise pin data to list[dict[str, str]].
@@ -321,6 +369,7 @@ def _extract_sheets(sch: ksa.Schematic) -> list[ParsedSheet]:
             ParsedSheet(
                 name=name,
                 filename=filename,
+                uuid=uuid,
                 pins=pins,
             )
         )
