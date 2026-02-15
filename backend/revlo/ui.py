@@ -19,14 +19,14 @@ AMBER = "#FFB347"  # Warm Amber     -- warnings
 # ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
-
+VERSION = "v0.1"
 LOGO = (
     "██████╗ ███████╗██╗   ██╗██╗      ██████╗ \n"
     "██╔══██╗██╔════╝██║   ██║██║     ██╔═══██╗\n"
     "██████╔╝█████╗  ██║   ██║██║     ██║   ██║\n"
     "██╔══██╗██╔══╝  ╚██╗ ██╔╝██║     ██║   ██║\n"
     "██║  ██║███████╗ ╚████╔╝ ███████╗╚██████╔╝\n"
-    "╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝"
+    f"╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝ {VERSION}"
 )
 
 
@@ -45,6 +45,32 @@ class BlockBarColumn(ProgressColumn):
         bar = Text()
         bar.append("\u2588" * filled, style=TEAL)
         bar.append("\u2591" * empty, style=TEAL)
+        return bar
+
+
+class BenDayDotsColumn(ProgressColumn):
+    """A progress bar with solid teal fill and halftone Ben-Day dots remainder.
+
+    Filled portion uses solid blocks (``\u2588``), remaining uses
+    alternating braille characters (``\u2895\u286a``) whose dot positions
+    interleave to form a fine-grained checkerboard / halftone pattern.
+    """
+
+    _FILL = "\u2588"               # █  — solid block
+    _DOTS = "\u2895"               # ⢕ — diagonal dot checkerboard
+
+    def __init__(self, bar_width: int = 30) -> None:
+        super().__init__()
+        self.bar_width = bar_width
+
+    def render(self, task: RichTask) -> Text:
+        if not task.total:
+            return Text(self._DOTS * self.bar_width, style=TEAL)
+        filled = int(self.bar_width * task.completed / task.total)
+        empty = self.bar_width - filled
+        bar = Text()
+        bar.append(self._FILL * filled, style=TEAL)
+        bar.append(self._DOTS * empty, style=TEAL)
         return bar
 
 
