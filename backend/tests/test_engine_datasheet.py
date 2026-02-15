@@ -171,6 +171,11 @@ async def _noop_review_with_ee_agent(chunks, system_prompt, model):
     return []
 
 
+async def _noop_review_chunk_generic(chunk, model):
+    """Mock _review_chunk_generic that returns no findings."""
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Test datasheet_specs parameter acceptance
 # ---------------------------------------------------------------------------
@@ -182,6 +187,9 @@ class TestDatasheetSpecsParameter:
         with patch(
             "revlo.reviewer.engine._review_with_ee_agent",
             side_effect=_noop_review_with_ee_agent,
+        ), patch(
+            "revlo.reviewer.engine._review_chunk_generic",
+            side_effect=_noop_review_chunk_generic,
         ):
             report = await review_schematic(schematic, datasheet_specs=None)
 
@@ -204,6 +212,9 @@ class TestDatasheetSpecsParameter:
         with patch(
             "revlo.reviewer.engine._review_with_ee_agent",
             side_effect=_noop_review_with_ee_agent,
+        ), patch(
+            "revlo.reviewer.engine._review_chunk_generic",
+            side_effect=_noop_review_chunk_generic,
         ):
             report = await review_schematic(schematic, datasheet_specs=specs)
 
@@ -223,6 +234,10 @@ class TestSpecInjectionIntoChunks:
             patch(
                 "revlo.reviewer.engine._review_with_ee_agent",
                 side_effect=_noop_review_with_ee_agent,
+            ),
+            patch(
+                "revlo.reviewer.engine._review_chunk_generic",
+                side_effect=_noop_review_chunk_generic,
             ),
         ):
             from revlo.reviewer.chunker import ReviewChunk
@@ -255,6 +270,10 @@ class TestSpecInjectionIntoChunks:
                 "revlo.reviewer.engine._review_with_ee_agent",
                 side_effect=_noop_review_with_ee_agent,
             ),
+            patch(
+                "revlo.reviewer.engine._review_chunk_generic",
+                side_effect=_noop_review_chunk_generic,
+            ),
         ):
             from revlo.reviewer.chunker import ReviewChunk
 
@@ -283,6 +302,10 @@ class TestSpecInjectionIntoChunks:
             patch(
                 "revlo.reviewer.engine._review_with_ee_agent",
                 side_effect=_noop_review_with_ee_agent,
+            ),
+            patch(
+                "revlo.reviewer.engine._review_chunk_generic",
+                side_effect=_noop_review_chunk_generic,
             ),
         ):
             from revlo.reviewer.chunker import ReviewChunk
@@ -320,6 +343,10 @@ class TestSpecInjectionIntoChunks:
             patch(
                 "revlo.reviewer.engine._review_with_ee_agent",
                 side_effect=_noop_review_with_ee_agent,
+            ),
+            patch(
+                "revlo.reviewer.engine._review_chunk_generic",
+                side_effect=_noop_review_chunk_generic,
             ),
         ):
             from revlo.reviewer.chunker import ReviewChunk

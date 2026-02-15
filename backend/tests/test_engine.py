@@ -6,7 +6,9 @@ All Claude API calls are fully mocked -- no real API traffic.
 from __future__ import annotations
 
 import datetime
-from unittest.mock import patch
+import json
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,6 +25,7 @@ from revlo.reviewer.engine import (
     MODEL_OPUS,
     MODEL_SONNET,
     _build_summary,
+    _review_chunk_generic,
     review_schematic,
 )
 from revlo.reviewer.models import (
@@ -185,12 +188,18 @@ class TestReviewSchematic:
 
     @pytest.mark.asyncio
     async def test_agent_returns_empty_findings(self):
-        """EE agent returns no findings produces empty report."""
+        """EE agent returns no findings and fallback also empty produces empty report."""
         schematic = _make_schematic()
+
+        async def _mock_chunk_generic(chunk, model):
+            return []
 
         with patch(
             "revlo.reviewer.engine._review_with_ee_agent",
             side_effect=_mock_review_with_ee_agent([]),
+        ), patch(
+            "revlo.reviewer.engine._review_chunk_generic",
+            side_effect=_mock_chunk_generic,
         ):
             report = await review_schematic(schematic)
 
@@ -261,3 +270,161 @@ class TestReExport:
     def test_in_all(self):
         import revlo.reviewer as pkg
         assert "review_schematic" in pkg.__all__
+
+
+# ---------------------------------------------------------------------------
+# Per-chunk generic fallback
+# ---------------------------------------------------------------------------
+def _mock_anthropic_response(text: str):
+    """Build a mock Anthropic messages.create response with given text."""
+    content_block = MagicMock()
+    content_block.text = text
+    response = MagicMock()
+    response.content = [content_block]
+    return response
+
+
+class TestGenericFallback:
+    """Test that per-chunk generic review is triggered when the EE agent fails."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_called_when_ee_returns_unparseable(self):
+        """When EE agent returns non-JSON text, fallback produces findings."""
+        schematic = _make_schematic()
+        finding_dict = _valid_finding_dict()
+        generic_response_json = json.dumps([finding_dict])
+
+        # EE agent returns garbage text (not JSON).
+        ee_response = _mock_anthropic_response("This is not valid JSON at all.")
+        # Generic fallback returns valid findings.
+        generic_response = _mock_anthropic_response(generic_response_json)
+
+        call_count = 0
+
+        async def _fake_create(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            # First call is the EE agent (has system= kwarg).
+            if "system" in kwargs:
+                return ee_response
+            # Subsequent calls are per-chunk generic review.
+            return generic_response
+
+        mock_client = MagicMock()
+        mock_client.messages.create = _fake_create
+
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+            report = await review_schematic(schematic)
+
+        # The fallback should have produced findings.
+        assert len(report.findings) > 0
+        assert report.findings[0].category == "decoupling"
+        # Should have been called more than once (EE + at least 1 fallback chunk).
+        assert call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_when_ee_succeeds(self):
+        """When EE agent returns valid findings, fallback is NOT triggered."""
+        schematic = _make_schematic()
+        finding_dict = _valid_finding_dict()
+        ee_response_json = json.dumps([finding_dict])
+
+        ee_response = _mock_anthropic_response(ee_response_json)
+
+        call_count = 0
+
+        async def _fake_create(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            return ee_response
+
+        mock_client = MagicMock()
+        mock_client.messages.create = _fake_create
+
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+            report = await review_schematic(schematic)
+
+        assert len(report.findings) > 0
+        # Only the single EE agent call, no fallback.
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_fallback_with_dict_findings_format(self):
+        """Generic fallback handles {'findings': [...]} response format."""
+        schematic = _make_schematic()
+        finding_dict = _valid_finding_dict()
+        generic_response_json = json.dumps({"findings": [finding_dict]})
+
+        ee_response = _mock_anthropic_response("not json")
+        generic_response = _mock_anthropic_response(generic_response_json)
+
+        async def _fake_create(**kwargs):
+            if "system" in kwargs:
+                return ee_response
+            return generic_response
+
+        mock_client = MagicMock()
+        mock_client.messages.create = _fake_create
+
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+            report = await review_schematic(schematic)
+
+        assert len(report.findings) > 0
+
+
+class TestDebugLogging:
+    """Test that warning logs include raw response text for debugging."""
+
+    @pytest.mark.asyncio
+    async def test_ee_agent_logs_unparseable_response(self, caplog):
+        """When EE agent returns non-JSON, warning log includes response text."""
+        schematic = _make_schematic()
+        garbage_text = "TRUNCATED JSON: {findings: [incomplete..."
+
+        ee_response = _mock_anthropic_response(garbage_text)
+        # Generic fallback also returns empty to avoid masking the log.
+        generic_response = _mock_anthropic_response("[]")
+
+        async def _fake_create(**kwargs):
+            if "system" in kwargs:
+                return ee_response
+            return generic_response
+
+        mock_client = MagicMock()
+        mock_client.messages.create = _fake_create
+
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+            with caplog.at_level(logging.WARNING, logger="revlo.reviewer.engine"):
+                await review_schematic(schematic)
+
+        # Check the warning log includes the response snippet.
+        assert any(
+            "Could not extract JSON from EE agent response" in record.message
+            and "TRUNCATED JSON" in record.message
+            for record in caplog.records
+        ), f"Expected warning log with response text, got: {[r.message for r in caplog.records]}"
+
+    @pytest.mark.asyncio
+    async def test_fallback_info_log_on_empty_ee(self, caplog):
+        """Info log is emitted when falling back to per-chunk review."""
+        schematic = _make_schematic()
+
+        ee_response = _mock_anthropic_response("no json here")
+        generic_response = _mock_anthropic_response("[]")
+
+        async def _fake_create(**kwargs):
+            if "system" in kwargs:
+                return ee_response
+            return generic_response
+
+        mock_client = MagicMock()
+        mock_client.messages.create = _fake_create
+
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+            with caplog.at_level(logging.INFO, logger="revlo.reviewer.engine"):
+                await review_schematic(schematic)
+
+        assert any(
+            "falling back to per-chunk generic review" in record.message
+            for record in caplog.records
+        ), f"Expected fallback info log, got: {[r.message for r in caplog.records]}"

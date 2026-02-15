@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
@@ -12,7 +13,7 @@ from revlo.datasheet.models import DatasheetSpec
 from revlo.parser.models import ParsedSchematic
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.reviewer.models import Finding, ReviewReport
-from revlo.reviewer.prompts import format_chunk_data
+from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
 from revlo.skills import load_skill
 
 logger = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ async def _review_with_ee_agent(
     try:
         response = await client.messages.create(
             model=model,
-            max_tokens=4096,
+            max_tokens=8192,
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -106,7 +107,10 @@ async def _review_with_ee_agent(
 
         if parsed is None:
             logger.warning(
-                "Could not extract JSON from EE agent response, skipping",
+                "Could not extract JSON from EE agent response (len=%d), skipping. "
+                "First 500 chars: %.500s",
+                len(text),
+                text,
             )
             return []
 
@@ -145,6 +149,58 @@ async def _review_with_ee_agent(
             "EE agent API call failed, skipping",
             exc_info=True,
         )
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Per-chunk generic fallback
+# ---------------------------------------------------------------------------
+async def _review_chunk_generic(
+    chunk: ReviewChunk,
+    model: str,
+) -> list[Finding]:
+    """Review a single chunk using a focused per-chunk prompt (generic fallback)."""
+    import anthropic
+
+    prompt = build_review_prompt(chunk)
+    client = anthropic.AsyncAnthropic()
+
+    try:
+        response = await client.messages.create(
+            model=model,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text
+        parsed = _extract_json_from_response(text)
+
+        if parsed is None:
+            logger.warning(
+                "Could not extract JSON from generic review of chunk %r (len=%d). "
+                "First 500 chars: %.500s",
+                chunk.label,
+                len(text),
+                text,
+            )
+            return []
+
+        # Handle both [...] and {"findings": [...]} formats
+        if isinstance(parsed, dict):
+            raw_findings = parsed.get("findings", [])
+        elif isinstance(parsed, list):
+            raw_findings = parsed
+        else:
+            return []
+
+        findings: list[Finding] = []
+        for item in raw_findings:
+            try:
+                findings.append(Finding.model_validate(item))
+            except Exception:
+                logger.warning("Invalid finding from generic review, skipping: %s", item)
+        return findings
+    except Exception:
+        logger.warning("Generic review API call failed for chunk %r", chunk.label, exc_info=True)
         return []
 
 
@@ -212,6 +268,17 @@ async def review_schematic(
     all_findings = await _review_with_ee_agent(
         chunks, ee_prompt, model or DEFAULT_MODEL
     )
+
+    # Fallback: if EE agent produced no findings, try per-chunk generic review.
+    if not all_findings and chunks:
+        logger.info(
+            "EE agent returned no findings, falling back to per-chunk generic review"
+        )
+        chunk_results = await asyncio.gather(
+            *[_review_chunk_generic(chunk, model or DEFAULT_MODEL) for chunk in chunks]
+        )
+        for chunk_findings in chunk_results:
+            all_findings.extend(chunk_findings)
 
     # Filter low-confidence findings.
     all_findings = [f for f in all_findings if f.confidence >= min_confidence]
