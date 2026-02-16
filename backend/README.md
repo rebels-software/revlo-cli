@@ -1,12 +1,12 @@
 <div align="center">
 
 ```
-██████╗ ███████╗██╗   ██╗██╗      ██████╗
+██████╗ ███████╗██╗   ██╗██╗      ██████╗ 
 ██╔══██╗██╔════╝██║   ██║██║     ██╔═══██╗
 ██████╔╝█████╗  ██║   ██║██║     ██║   ██║
 ██╔══██╗██╔══╝  ╚██╗ ██╔╝██║     ██║   ██║
 ██║  ██║███████╗ ╚████╔╝ ███████╗╚██████╔╝
-╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝
+╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝ 
 ```
 
 [![PyPI](https://img.shields.io/pypi/v/revlo-cli)](https://pypi.org/project/revlo-cli/)
@@ -314,7 +314,7 @@ cd backend && uv run python -c "from revlo.parser import parse_schematic; print(
 
 ## Built With
 
-Built with **Opus 4.6** during a [Claude Code hackathon](https://claude.ai/claude-code). Revlo is an early-stage project -- more features, deeper analysis, and broader KiCad support are on the way.
+Built with **Opus 4.6** during a [Claude Code hackathon](https://cerebralvalley.ai/e/claude-code-hackathon). Revlo is an early-stage project -- more features, deeper analysis, and broader KiCad support are on the way.
 
 ## License
 
