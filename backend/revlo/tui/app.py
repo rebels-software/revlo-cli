@@ -945,6 +945,7 @@ def _block_to_dict(block) -> dict:
         return {
             "type": "thinking",
             "thinking": getattr(block, "thinking", ""),
+            "signature": getattr(block, "signature", ""),
         }
     if block.type == "text":
         return {"type": "text", "text": block.text}
