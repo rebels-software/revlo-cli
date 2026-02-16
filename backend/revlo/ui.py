@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from rich.console import Console
 from rich.progress import ProgressColumn, Task as RichTask
 from rich.text import Text
@@ -17,6 +19,9 @@ AMBER = "#FFB347"  # Warm Amber     -- warnings
 
 # Gradient stops: teal -> sky blue -> indigo
 GRADIENT_COLORS = ["#00D4AA", "#38BDF8", "#818CF8"]
+
+# Looping gradient: append first color so the cycle wraps smoothly
+GRADIENT_LOOP = ["#00D4AA", "#38BDF8", "#818CF8", "#00D4AA"]
 
 
 def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
@@ -67,6 +72,65 @@ def gradient_text(text: str, colors: list[str], bold: bool = False) -> Text:
         result.append(char, style=style)
 
     return result
+
+
+class AnimatedGradient:
+    """A renderable that shifts a color gradient through text on each frame.
+
+    The gradient colors cycle continuously left-to-right, creating a
+    shimmer/wave effect when rendered inside a Rich Live/Status context.
+    """
+
+    def __init__(
+        self,
+        text: str,
+        colors: list[str],
+        bold: bool = False,
+        speed: float = 1.0,
+    ) -> None:
+        self.text = text
+        self.colors = colors
+        self.bold = bold
+        self.speed = speed  # full cycles per second
+        self._rgb_colors = [_hex_to_rgb(c) for c in colors]
+
+    def __rich__(self) -> Text:
+        """Called by Rich on each render frame."""
+        # Use time to calculate phase offset (0.0 to 1.0, cycling)
+        phase = (time.monotonic() * self.speed) % 1.0
+
+        t = Text()
+        n = len(self.text)
+        if n == 0:
+            return t
+
+        num_stops = len(self._rgb_colors)
+        if num_stops == 0:
+            return Text(self.text)
+
+        for i, char in enumerate(self.text):
+            # Position in gradient space, shifted by phase
+            # This makes colors appear to flow left-to-right
+            pos = ((i / max(n - 1, 1)) + phase) % 1.0
+
+            # Map pos to color stops
+            segment = pos * (num_stops - 1)
+            idx = int(segment)
+            frac = segment - idx
+
+            if idx >= num_stops - 1:
+                r, g, b = self._rgb_colors[-1]
+            else:
+                r1, g1, b1 = self._rgb_colors[idx]
+                r2, g2, b2 = self._rgb_colors[idx + 1]
+                r = int(r1 + (r2 - r1) * frac)
+                g = int(g1 + (g2 - g1) * frac)
+                b = int(b1 + (b2 - b1) * frac)
+
+            style = f"{'bold ' if self.bold else ''}#{r:02x}{g:02x}{b:02x}"
+            t.append(char, style=style)
+
+        return t
 
 
 # ---------------------------------------------------------------------------

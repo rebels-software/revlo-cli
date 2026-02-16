@@ -18,10 +18,10 @@ from revlo.report import generate_markdown_report
 from revlo.reviewer import MODEL_OPUS, MODEL_SONNET, review_schematic
 from revlo.ui import (
     AMBER,
-    GRADIENT_COLORS,
+    GRADIENT_LOOP,
     TEAL,
+    AnimatedGradient,
     BenDayDotsColumn,
-    gradient_text,
     print_error,
     print_finding_cards,
     print_header,
@@ -262,7 +262,7 @@ def _run_review(args: argparse.Namespace) -> None:
     try:
         if show_rich:
             with Status(
-                gradient_text("Running review...", GRADIENT_COLORS, bold=True),
+                AnimatedGradient("Running review...", GRADIENT_LOOP, bold=True, speed=0.5),
                 console=console,
                 spinner="dots",
             ):
