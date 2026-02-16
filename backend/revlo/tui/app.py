@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -58,16 +56,6 @@ _FILTER_NAMES: dict[str, str] = {
     "suggestions": "Suggestions",
 }
 
-
-def _open_file(path: str) -> None:
-    """Open a file with the OS default application (cross-platform)."""
-    if sys.platform == "darwin":
-        subprocess.Popen(["open", path])
-    elif sys.platform == "win32":
-        import os
-        os.startfile(path)  # type: ignore[attr-defined]
-    else:
-        subprocess.Popen(["xdg-open", path])
 
 
 def _build_filter_left(filter_name: str) -> str:
@@ -530,7 +518,14 @@ class RevloApp(App[None]):
         ref = highlighted.finding.component_ref
         spec = self.report.datasheet_specs.get(ref)
         if spec and spec.pdf_path and Path(spec.pdf_path).exists():
-            _open_file(spec.pdf_path)
-            self.notify(f"Opening datasheet for {ref}")
+            pdf_path = spec.pdf_path
+            # Open in browser with #page=N fragment for page-specific navigation
+            # (supported by Chrome, Firefox, Edge on all platforms)
+            page_frag = ""
+            if spec.relevant_pages:
+                page_frag = f"#page={spec.relevant_pages[0]}"
+            import webbrowser
+            webbrowser.open(f"file://{pdf_path}{page_frag}")
+            self.notify(f"Opening datasheet for {ref} (p.{spec.relevant_pages[0]})" if spec.relevant_pages else f"Opening datasheet for {ref}")
         else:
             self.notify("No datasheet available for this finding.")
