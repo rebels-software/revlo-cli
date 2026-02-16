@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from revlo.cli import _build_parser, _run_open, _run_review, main
+from revlo.cli import _build_parser, _run_history, _run_open, _run_review, main
 from revlo.parser.models import (
     ParsedComponent,
     ParsedSchematic,
@@ -1018,3 +1018,285 @@ def test_main_module_imports():
     main_content = main_path.read_text()
     assert "from revlo.cli import main" in main_content
     assert "main()" in main_content
+
+
+# ---------------------------------------------------------------------------
+# Test _build_parser: history subcommand
+# ---------------------------------------------------------------------------
+def test_build_parser_creates_history_subcommand():
+    """Test that _build_parser creates a history subcommand."""
+    parser = _build_parser()
+    args = parser.parse_args(["history", "test.kicad_sch"])
+    assert args.command == "history"
+    assert args.path == "test.kicad_sch"
+    assert args.load is None
+    assert args.json_output is False
+    assert args.no_tui is False
+
+
+def test_build_parser_history_with_load_flag():
+    """Test history --load N flag."""
+    parser = _build_parser()
+    args = parser.parse_args(["history", "test.kicad_sch", "--load", "3"])
+    assert args.load == 3
+
+
+def test_build_parser_history_with_all_flags():
+    """Test history with --load, --json, --no-tui flags."""
+    parser = _build_parser()
+    args = parser.parse_args(
+        ["history", "test.kicad_sch", "--load", "1", "--json", "--no-tui"]
+    )
+    assert args.load == 1
+    assert args.json_output is True
+    assert args.no_tui is True
+
+
+# ---------------------------------------------------------------------------
+# Test _run_history
+# ---------------------------------------------------------------------------
+def test_run_history_file_not_found():
+    """Test _run_history exits when schematic file does not exist."""
+    args = _build_parser().parse_args(["history", "nonexistent.kicad_sch"])
+    with pytest.raises(SystemExit) as exc:
+        _run_history(args)
+    assert exc.value.code == 1
+
+
+def test_run_history_no_entries(fixture_path: str, capsys):
+    """Test _run_history shows 'No history found' when .revlo/ is empty."""
+    with patch("revlo.storage.list_entries", return_value=[]):
+        args = _build_parser().parse_args(["history", fixture_path])
+        _run_history(args)
+
+    captured = capsys.readouterr()
+    assert "No history found" in captured.err
+
+
+def test_run_history_lists_entries(fixture_path: str, capsys):
+    """Test _run_history displays a table of entries."""
+    from revlo.storage import HistoryEntry
+
+    entries = [
+        HistoryEntry(
+            path=Path("/tmp/.revlo/board-review-20260212T120000.json"),
+            entry_type="review",
+            meta={"saved_at": "2026-02-12T12:00:00+00:00"},
+            summary="2 errors, 1 warning",
+        ),
+        HistoryEntry(
+            path=Path("/tmp/.revlo/board-chat-20260201T140000.json"),
+            entry_type="chat",
+            meta={"saved_at": "2026-02-01T14:00:00+00:00"},
+            summary="5 messages",
+        ),
+    ]
+
+    with patch("revlo.storage.list_entries", return_value=entries):
+        args = _build_parser().parse_args(["history", fixture_path])
+        _run_history(args)
+
+    captured = capsys.readouterr()
+    # Should show both entries with indices, types, dates, summaries
+    assert "review" in captured.err
+    assert "chat" in captured.err
+    assert "2 errors, 1 warning" in captured.err
+    assert "5 messages" in captured.err
+    assert "2026-02-12" in captured.err
+    assert "2026-02-01" in captured.err
+
+
+def test_run_history_load_out_of_range(fixture_path: str, capsys):
+    """Test --load N with N out of range shows error."""
+    from revlo.storage import HistoryEntry
+
+    entries = [
+        HistoryEntry(
+            path=Path("/tmp/.revlo/board-review-20260212T120000.json"),
+            entry_type="review",
+            meta={"saved_at": "2026-02-12T12:00:00+00:00"},
+            summary="1 error",
+        ),
+    ]
+
+    with patch("revlo.storage.list_entries", return_value=entries):
+        args = _build_parser().parse_args(["history", fixture_path, "--load", "5"])
+        with pytest.raises(SystemExit) as exc:
+            _run_history(args)
+        assert exc.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "out of range" in captured.err
+
+
+def test_run_history_load_zero(fixture_path: str, capsys):
+    """Test --load 0 shows error (indices start at 1)."""
+    from revlo.storage import HistoryEntry
+
+    entries = [
+        HistoryEntry(
+            path=Path("/tmp/.revlo/board-review-20260212T120000.json"),
+            entry_type="review",
+            meta={"saved_at": "2026-02-12T12:00:00+00:00"},
+            summary="1 error",
+        ),
+    ]
+
+    with patch("revlo.storage.list_entries", return_value=entries):
+        args = _build_parser().parse_args(["history", fixture_path, "--load", "0"])
+        with pytest.raises(SystemExit) as exc:
+            _run_history(args)
+        assert exc.value.code == 1
+
+
+def test_run_history_load_json(
+    fixture_path: str, mock_review_report: ReviewReport, capsys
+):
+    """Test --load N --json outputs the entry as JSON."""
+    from revlo.storage import HistoryEntry
+
+    entry = HistoryEntry(
+        path=Path("/tmp/.revlo/board-review-20260212T120000.json"),
+        entry_type="review",
+        meta={"saved_at": "2026-02-12T12:00:00+00:00"},
+        summary="1 error",
+    )
+
+    with patch("revlo.storage.list_entries", return_value=[entry]):
+        with patch(
+            "revlo.storage.load_entry",
+            return_value=(
+                mock_review_report,
+                {"saved_at": "2026-02-12T12:00:00+00:00", "schematic": "board.kicad_sch"},
+                "review",
+            ),
+        ):
+            args = _build_parser().parse_args(
+                ["history", fixture_path, "--load", "1", "--json"]
+            )
+            _run_history(args)
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert "findings" in data
+    assert "summary" in data
+
+
+def test_run_history_load_no_tui_review(
+    fixture_path: str, mock_review_report: ReviewReport, capsys
+):
+    """Test --load N --no-tui prints finding cards for a review entry."""
+    from revlo.storage import HistoryEntry
+
+    entry = HistoryEntry(
+        path=Path("/tmp/.revlo/board-review-20260212T120000.json"),
+        entry_type="review",
+        meta={"saved_at": "2026-02-12T12:00:00+00:00"},
+        summary="1 error",
+    )
+
+    with patch("revlo.storage.list_entries", return_value=[entry]):
+        with patch(
+            "revlo.storage.load_entry",
+            return_value=(
+                mock_review_report,
+                {"saved_at": "2026-02-12T12:00:00+00:00", "schematic": "board.kicad_sch"},
+                "review",
+            ),
+        ):
+            args = _build_parser().parse_args(
+                ["history", fixture_path, "--load", "1", "--no-tui"]
+            )
+            _run_history(args)
+
+    captured = capsys.readouterr()
+    assert "ERROR" in captured.err
+    assert "U1" in captured.err
+    assert "Missing decoupling capacitor" in captured.err
+
+
+def test_run_history_load_no_tui_chat(fixture_path: str, capsys):
+    """Test --load N --no-tui prints conversation for a chat entry."""
+    from revlo.storage import HistoryEntry
+
+    entry = HistoryEntry(
+        path=Path("/tmp/.revlo/board-chat-20260201T140000.json"),
+        entry_type="chat",
+        meta={"saved_at": "2026-02-01T14:00:00+00:00"},
+        summary="2 messages",
+    )
+
+    chat_data = {
+        "messages": [
+            {"role": "user", "content": "What about C1?"},
+            {"role": "assistant", "content": "C1 looks fine."},
+        ],
+    }
+
+    with patch("revlo.storage.list_entries", return_value=[entry]):
+        with patch(
+            "revlo.storage.load_entry",
+            return_value=(
+                chat_data,
+                {"saved_at": "2026-02-01T14:00:00+00:00", "schematic": "board.kicad_sch"},
+                "chat",
+            ),
+        ):
+            args = _build_parser().parse_args(
+                ["history", fixture_path, "--load", "1", "--no-tui"]
+            )
+            _run_history(args)
+
+    captured = capsys.readouterr()
+    assert "user" in captured.err
+    assert "What about C1?" in captured.err
+    assert "assistant" in captured.err
+    assert "C1 looks fine." in captured.err
+
+
+def test_run_history_load_chat_json(fixture_path: str, capsys):
+    """Test --load N --json for a chat entry outputs raw JSON."""
+    from revlo.storage import HistoryEntry
+
+    entry = HistoryEntry(
+        path=Path("/tmp/.revlo/board-chat-20260201T140000.json"),
+        entry_type="chat",
+        meta={"saved_at": "2026-02-01T14:00:00+00:00"},
+        summary="2 messages",
+    )
+
+    chat_data = {
+        "messages": [
+            {"role": "user", "content": "Hello"},
+        ],
+    }
+
+    with patch("revlo.storage.list_entries", return_value=[entry]):
+        with patch(
+            "revlo.storage.load_entry",
+            return_value=(
+                chat_data,
+                {"saved_at": "2026-02-01T14:00:00+00:00", "schematic": "board.kicad_sch"},
+                "chat",
+            ),
+        ):
+            args = _build_parser().parse_args(
+                ["history", fixture_path, "--load", "1", "--json"]
+            )
+            _run_history(args)
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert "messages" in data
+    assert len(data["messages"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Test main() with history subcommand
+# ---------------------------------------------------------------------------
+@patch("revlo.cli._run_history")
+def test_main_with_history_subcommand(mock_run_history: MagicMock, fixture_path: str):
+    """Test main() calls _run_history when history subcommand is provided."""
+    with patch("sys.argv", ["revlo", "history", fixture_path]):
+        main()
+    mock_run_history.assert_called_once()

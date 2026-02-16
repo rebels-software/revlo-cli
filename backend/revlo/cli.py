@@ -108,6 +108,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Output stored review as JSON",
     )
 
+    # -- history subcommand: browse past reviews/chats --
+    history_cmd = subparsers.add_parser(
+        "history",
+        help="List past reviews and conversations for a schematic",
+    )
+    history_cmd.add_argument("path", help="Path to a .kicad_sch file")
+    history_cmd.add_argument(
+        "--load",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Load the Nth entry (1 = latest)",
+    )
+    history_cmd.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output the loaded entry as JSON",
+    )
+    history_cmd.add_argument(
+        "--no-tui",
+        action="store_true",
+        dest="no_tui",
+        help="Print finding cards (review) or conversation (chat) instead of TUI",
+    )
+
     return parser
 
 
@@ -343,6 +369,135 @@ def _run_review(args: argparse.Namespace) -> None:
     app.run()
 
 
+def _run_history(args: argparse.Namespace) -> None:
+    """Execute the history subcommand."""
+    import json as json_mod
+
+    from rich.table import Table
+    from rich.text import Text
+
+    from revlo.storage import list_entries, load_entry
+
+    path: str = args.path
+
+    if not os.path.isfile(path):
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    entries = list_entries(path)
+
+    # No --load: list all entries
+    if args.load is None:
+        console = Console(stderr=True)
+
+        if not entries:
+            console.print(
+                f"[{AMBER}]No history found for {path}[/{AMBER}]"
+            )
+            return
+
+        print_header(console)
+        print_step(console, f"Review history for {Path(path).name}")
+        console.print()
+
+        table = Table(show_header=True, header_style=f"bold {TEAL}", box=None)
+        table.add_column("#", style="bold white", width=4)
+        table.add_column("Type", width=10)
+        table.add_column("Date", width=20)
+        table.add_column("Summary")
+
+        for idx, entry in enumerate(entries, 1):
+            # Type badge
+            if entry.entry_type == "review":
+                type_text = Text("review", style=TEAL)
+            else:
+                type_text = Text("chat", style=AMBER)
+
+            # Timestamp
+            saved_at = entry.meta.get("saved_at", "")
+            if saved_at:
+                try:
+                    from datetime import datetime as _dt
+
+                    dt = _dt.fromisoformat(saved_at)
+                    date_str = dt.strftime("%Y-%m-%d %H:%M")
+                except (ValueError, TypeError):
+                    date_str = saved_at[:16]
+            else:
+                date_str = "unknown"
+
+            table.add_row(str(idx), type_text, date_str, entry.summary)
+
+        console.print(table)
+        return
+
+    # --load N: load a specific entry
+    n = args.load
+    if n < 1 or n > len(entries):
+        print(
+            f"Error: entry {n} out of range (1-{len(entries)})",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    entry = entries[n - 1]
+    data, meta, entry_type = load_entry(entry.path)
+
+    # --json: output raw JSON
+    if args.json_output:
+        if entry_type == "review":
+            print(data.model_dump_json(indent=2))
+        else:
+            print(json_mod.dumps(data, indent=2))
+        return
+
+    # --no-tui: print finding cards (review) or conversation (chat)
+    if args.no_tui:
+        console = Console(stderr=True)
+        print_header(console)
+        saved_at = meta.get("saved_at", "unknown")
+        print_step(console, f"Loaded {entry_type} from {saved_at}")
+
+        if entry_type == "review":
+            print_summary(console, data)
+            print_finding_cards(console, data)
+        else:
+            # Chat: print messages
+            messages = data.get("messages", [])
+            for msg in messages:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                console.print(f"[bold]{role}:[/] {content}")
+        return
+
+    # Default: launch TUI (only for reviews)
+    if entry_type == "review":
+        console = Console(stderr=True)
+        print_header(console)
+        saved_at = meta.get("saved_at", "unknown")
+        print_step(console, f"Loaded review from {saved_at}")
+        print_summary(console, data)
+
+        console.print("[white]Launching review browser...[/]")
+        console.print()
+
+        from revlo.tui import RevloApp
+
+        app = RevloApp(data, path)
+        app.run()
+    else:
+        # Chat entries fall back to --no-tui display
+        console = Console(stderr=True)
+        print_header(console)
+        saved_at = meta.get("saved_at", "unknown")
+        print_step(console, f"Loaded chat from {saved_at}")
+        messages = data.get("messages", [])
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            console.print(f"[bold]{role}:[/] {content}")
+
+
 def _run_open(args: argparse.Namespace) -> None:
     """Open the last stored review for a schematic."""
     from revlo.storage import load_latest_review
@@ -409,6 +564,8 @@ def _main_inner() -> None:
         _run_review(args)
     elif args.command == "open":
         _run_open(args)
+    elif args.command == "history":
+        _run_history(args)
     else:
         parser.print_help()
         sys.exit(1)
