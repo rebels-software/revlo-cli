@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
+from rich.console import Group as RichGroup
+from rich.markdown import Markdown as RichMarkdown
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Input, Static
 
@@ -271,22 +273,42 @@ class MessageBubble(Static):
     def __init__(self, role: str, content: str, **kwargs) -> None:
         self._role = role
         self._content = content
+        self._finalized = False
         # Pass formatted content to Static.__init__ so the widget has
         # correct dimensions from the very first layout calculation.
         super().__init__(self._format_content(), **kwargs)
 
-    def _format_content(self) -> str:
+    def _format_content(self) -> Union[str, RichGroup]:
+        """Format message content for display.
+
+        User messages use Rich markup for simple label + text rendering.
+        Assistant messages use Rich markup during streaming (for speed),
+        then switch to full ``rich.markdown.Markdown`` rendering once
+        the response is finalized -- giving proper headers, tables,
+        lists, code blocks, bold, etc.
+        """
         if self._role == "user":
             return f"[bold {SOFT_WHITE}]You:[/] [{LIGHT_GRAY}]{self._content}[/]"
-        else:
-            marked = markup_response(self._content)
-            return f"[bold {ELECTRIC_TEAL}]Revlo:[/] {marked}"
+        if self._finalized:
+            # Full markdown rendering for completed assistant messages
+            label = f"[bold {ELECTRIC_TEAL}]Revlo:[/]"
+            md = RichMarkdown(self._content)
+            return RichGroup(label, md)
+        # Plain Rich markup during streaming
+        marked = markup_response(self._content)
+        return f"[bold {ELECTRIC_TEAL}]Revlo:[/] {marked}"
 
     def update_content(self, content: str) -> None:
         """Update the message content (used during streaming)."""
         self._content = content
         self.update(self._format_content())
         self.refresh(layout=True)  # height changes as streaming text grows
+
+    def finalize(self) -> None:
+        """Switch to full markdown rendering after streaming completes."""
+        self._finalized = True
+        self.update(self._format_content())
+        self.refresh(layout=True)
 
 
 class ChatPanel(Vertical):
@@ -360,6 +382,7 @@ class ChatPanel(Vertical):
 
         if self._streaming_bubble is not None:
             self._streaming_bubble.update_content(full_text)
+            self._streaming_bubble.finalize()  # switch to markdown rendering
             self._streaming_bubble = None
         msg = ChatMessage("assistant", full_text, datetime.now(timezone.utc).isoformat())
         self.messages.append(msg)
@@ -386,6 +409,25 @@ class ChatPanel(Vertical):
             classes="chat-tool-status",
         )
         scroll.mount(label)
+        scroll.scroll_end(animate=False)
+
+    def load_history(self, messages: list[dict]) -> None:
+        """Load saved chat messages into the conversation area.
+
+        Each message dict should have keys: role, content, and optionally timestamp.
+        Populates both the visual scroll area and the internal messages list.
+        """
+        scroll = self.query_one("#chat-scroll", VerticalScroll)
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            timestamp = m.get("timestamp", "")
+            msg = ChatMessage(role, content, timestamp)
+            self.messages.append(msg)
+            bubble = MessageBubble(role, content)
+            if role == "assistant":
+                bubble._finalized = True
+            scroll.mount(bubble)
         scroll.scroll_end(animate=False)
 
     def set_input_enabled(self, enabled: bool) -> None:
