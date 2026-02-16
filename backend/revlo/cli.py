@@ -186,7 +186,7 @@ def _run_review(args: argparse.Namespace) -> None:
                         ds_counts[source] = ds_counts.get(source, 0) + 1
                         if source == "cached":
                             progress.console.print(
-                                f"  [{TEAL} dim]{ref}: {mpn} (cached)[/]"
+                                f"  [dim]{ref}: {mpn} (cached)[/]"
                             )
                         elif source == "manual":
                             progress.console.print(
@@ -316,7 +316,7 @@ def _run_review(args: argparse.Namespace) -> None:
     time.sleep(1.5)  # Let user read severity summary before TUI takes over.
 
     if show_rich:
-        print_step(console, "Launching review browser...")
+        console.print("[white]Launching review browser...[/]")
         console.print()
 
     from revlo.tui import RevloApp

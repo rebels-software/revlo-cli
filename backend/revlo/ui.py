@@ -83,7 +83,8 @@ def print_error(console: Console, text: str) -> None:
 def print_header(console: Console) -> None:
     """Print the branded ASCII art header."""
     console.print()
-    console.print(LOGO, style=f"bold {TEAL}")
+    txt = Text(LOGO, style=f"bold {TEAL}")
+    console.print(txt)
     console.print("[dim]AI-powered design review for KiCad schematics[/]")
     console.print()
 
