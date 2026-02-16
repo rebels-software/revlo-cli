@@ -9,14 +9,16 @@
 ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝
 ```
 
+[![PyPI](https://img.shields.io/pypi/v/revlo-cli)](https://pypi.org/project/revlo-cli/)
+[![Python](https://img.shields.io/pypi/pyversions/revlo-cli)](https://pypi.org/project/revlo-cli/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-569%20passing-brightgreen)]()
+
 **Review your hardware before it reviews your wallet.**
 
 *AI-powered design review for KiCad schematics*
 
 </div>
-
-<!-- --- -->
-<!-- ![Revlo Demo](docs/demo.gif) -->
 
 ## What is Revlo?
 
@@ -30,7 +32,9 @@ Revlo is a command-line tool that catches electrical engineering mistakes in KiC
 - **6-Domain EE Review** -- Claude reviews your design across decoupling, pull-ups, unused pins, reset circuits, clock/oscillator, signal integrity, power rails, grounding, ESD, and thermal concerns
 - **Confidence-Scored Findings** -- Every finding includes a 0.0-1.0 confidence score so you can prioritize what matters
 - **Interactive TUI Browser** -- Browse and filter findings in a full-screen terminal UI with severity highlighting
+- **Ask Mode** -- Interactive chat with Claude Opus that has live access to your schematic via built-in tools
 - **Branded CLI Output** -- Progress bars, colour-coded severity cards, and a summary line at a glance
+- **Review History** -- Every review and conversation is saved automatically; re-open past reviews without re-running
 - **JSON & Markdown Export** -- Pipe structured output into your CI/CD pipeline or generate human-readable reports
 
 ## Quick Start
@@ -38,13 +42,13 @@ Revlo is a command-line tool that catches electrical engineering mistakes in KiC
 ### Install
 
 ```bash
-pip install revlo
+pip install revlo-cli
 ```
 
 Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install revlo
+uv tool install revlo-cli
 ```
 
 ### First Review
@@ -108,6 +112,63 @@ Found 3 errors, 5 warnings, 4 suggestions
   pull-ups on these pins.
 ```
 
+## Ask Mode
+
+Press `a` in the TUI to enter Ask Mode -- an interactive chat with Claude Opus that has live access to your schematic. Ask complex EE questions and get answers grounded in your actual design.
+
+### Schematic Tools
+
+Opus can actively explore your design using 4 built-in tools:
+
+| Tool | What it does |
+|------|-------------|
+| `lookup_component(ref)` | Get full component details: pins, nets, properties, datasheet specs |
+| `trace_net(net_name)` | See every component/pin connected to a net |
+| `find_unconnected_pins(ref?)` | Find floating pins, optionally filtered by component |
+| `list_power_rails()` | List all power nets with connection counts |
+
+### Example
+
+> **You:** Is my reset circuit correct for U1?
+>
+> **Revlo:** [looks up U1, traces the NRST net]
+> The STM32F103 datasheet (p.47) requires a 100nF filter cap on NRST.
+> Your circuit has C3 (100nF) to GND and R5 (10k) pull-up to VCC.
+> RC time constant: 10k x 100nF = 1ms -- well above the 20us minimum.
+
+Toggle extended thinking with `t` for deeper analysis on complex questions.
+
+## TUI Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Up`/`Down` or `j`/`k` | Navigate findings |
+| `e` | Filter: errors only |
+| `w` | Filter: warnings only |
+| `s` | Filter: suggestions only |
+| `f` | Filter: show all |
+| `a` | Enter Ask Mode |
+| `t` | Toggle extended thinking (in Ask Mode) |
+| `m` | Export markdown report |
+| `o` | Open datasheet PDF |
+| `Esc` | Exit Ask Mode |
+| `q` | Quit |
+
+## Review History
+
+Revlo saves every review and Ask Mode conversation automatically.
+
+```bash
+# List past reviews for a schematic
+revlo history board.kicad_sch
+
+# Re-open last review in TUI (no re-run needed)
+revlo open board.kicad_sch
+
+# Load a specific past review
+revlo history board.kicad_sch --load 2
+```
+
 ## How It Works
 
 ```
@@ -132,13 +193,19 @@ Found 3 errors, 5 warnings, 4 suggestions
         │
         ▼
  ┌─────────────┐
- │  EE Revie   │  Claude reviews each chunk against
+ │  EE Review  │  Claude reviews each chunk against
  │  Engine     │  domain-specific checklists + datasheet specs
  └──────┬──────┘
         │
         ▼
  ┌─────────────┐
  │  Output     │  TUI browser, CLI cards, JSON, Markdown
+ └──────┬──────┘
+        │
+        ▼
+ ┌─────────────┐
+ │  Ask Mode   │  Interactive chat with schematic tools
+ │  (optional) │  Extended thinking for deep EE analysis
  └─────────────┘
 ```
 
@@ -206,8 +273,17 @@ revlo review board.kicad_sch --min-confidence 0.7
 # Use Opus model for deeper review
 revlo review board.kicad_sch --model opus
 
+# Verbose output (show debug info)
+revlo review board.kicad_sch --verbose
+
 # Re-open last review without re-running
 revlo open board.kicad_sch
+
+# List past reviews for a schematic
+revlo history board.kicad_sch
+
+# Load a specific past review in the TUI
+revlo history board.kicad_sch --load 2
 ```
 
 ## Development
@@ -238,4 +314,4 @@ cd backend && uv run python -c "from revlo.parser import parse_schematic; print(
 
 ## License
 
-Apache 2.0 -- see [LICENSE](LICENSE) for details.
+Apache 2.0 -- see [LICENSE](https://github.com/rebels-software/revlo-cli/blob/main/LICENSE) for details.
