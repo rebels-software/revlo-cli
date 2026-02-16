@@ -285,6 +285,7 @@ Each finding MUST have these fields:
 - `description`: detailed explanation of the issue, citing specific pin numbers and net names
 - `recommendation`: specific, actionable fix
 - `confidence`: float 0.0-1.0
+- `suggested_fix`: Specific, actionable fix. Include: exact component value and package (e.g. "100nF 0402 X7R"), placement ("within 5mm of U1 pin 32"), and datasheet reference ("See p.47, Table 13"). Leave empty string "" if no concrete fix applies.
 
 If no issues are found, return: `{"findings": []}`
 
@@ -294,7 +295,7 @@ If you find the same issue from multiple checklist domains (e.g., both Signal In
 
 ### Rules
 
-- Every finding must have all seven fields populated.
+- Every finding must have all eight fields populated.
 - The `component_ref` must reference a component from the chunk data.
 - Be precise: cite specific pin numbers and net names.
 - Prefer actionable recommendations over vague advice.

@@ -38,6 +38,7 @@ class Finding(BaseModel):
     description: str
     recommendation: str
     confidence: float = Field(ge=0.0, le=1.0)
+    suggested_fix: str = ""
 
 
 class SeverityStats(BaseModel):
