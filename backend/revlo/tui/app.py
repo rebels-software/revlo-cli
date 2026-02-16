@@ -827,25 +827,42 @@ class RevloApp(App[None]):
                 elif block.type == "tool_use":
                     tool_uses.append(block)
 
-            # Accumulate text and update UI
-            if text_parts:
-                full_text += "".join(text_parts)
-                if self._chat_panel is not None:
-                    self.call_from_thread(
-                        self._chat_panel.update_assistant_stream, full_text
-                    )
-
-            # If no tool calls, we're done
+            # If no tool calls, just accumulate text and we're done
             if not tool_uses:
+                if text_parts:
+                    full_text += "".join(text_parts)
+                    if self._chat_panel is not None:
+                        self.call_from_thread(
+                            self._chat_panel.update_assistant_stream, full_text
+                        )
                 break
 
-            # Show tool use status in the chat
+            # Tool calls: show tool status FIRST, then finalize any
+            # preliminary text into the current bubble before the next round.
+            # This ensures tool lines appear above the final response.
+            if text_parts and self._chat_panel is not None:
+                full_text += "".join(text_parts)
+                self.call_from_thread(
+                    self._chat_panel.update_assistant_stream, full_text
+                )
+
             for tu in tool_uses:
                 status = _tool_status_text(tu.name, tu.input)
                 if self._chat_panel is not None:
                     self.call_from_thread(
                         self._chat_panel.show_tool_status, status
                     )
+
+            # Finalize the current bubble and start a fresh one for the
+            # next round's text (after tool results come back).
+            if self._chat_panel is not None:
+                self.call_from_thread(
+                    self._chat_panel.finish_assistant_message, full_text
+                )
+                full_text = ""
+                self.call_from_thread(
+                    self._chat_panel.start_assistant_message, "Thinking..."
+                )
 
             # Build assistant message with all content blocks for the API
             messages.append({
