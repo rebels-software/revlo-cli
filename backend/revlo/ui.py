@@ -21,7 +21,7 @@ AMBER = "#FFB347"  # Warm Amber     -- warnings
 GRADIENT_COLORS = ["#00D4AA", "#38BDF8", "#818CF8"]
 
 # Looping gradient: append first color so the cycle wraps smoothly
-GRADIENT_LOOP = ["#00D4AA", "#38BDF8", "#818CF8", "#00D4AA"]
+GRADIENT_LOOP = ["#00D4AA", "#38BDF8", "#818CF8", "#FFB347", "#00D4AA"]
 
 
 def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
