@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import webbrowser
+import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -56,6 +57,17 @@ _FILTER_NAMES: dict[str, str] = {
     "warnings": "Warnings",
     "suggestions": "Suggestions",
 }
+
+
+def _open_file(path: str) -> None:
+    """Open a file with the OS default application (cross-platform)."""
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    elif sys.platform == "win32":
+        import os
+        os.startfile(path)  # type: ignore[attr-defined]
+    else:
+        subprocess.Popen(["xdg-open", path])
 
 
 def _build_filter_left(filter_name: str) -> str:
@@ -516,7 +528,7 @@ class RevloApp(App[None]):
         ref = highlighted.finding.component_ref
         spec = self.report.datasheet_specs.get(ref)
         if spec and spec.pdf_path and Path(spec.pdf_path).exists():
-            webbrowser.open(f"file://{spec.pdf_path}")
+            _open_file(spec.pdf_path)
             self.notify(f"Opening datasheet for {ref}")
         else:
             self.notify("No datasheet available for this finding.")

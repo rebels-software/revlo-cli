@@ -230,13 +230,13 @@ class TestOpenDatasheetAction:
     def test_action_open_datasheet_with_available_pdf(
         self, report_with_datasheet_specs: ReviewReport, schematic_path: str
     ):
-        """action_open_datasheet should call webbrowser.open when PDF exists."""
+        """action_open_datasheet should call _open_file when PDF exists."""
         # Create a mock sidebar with a highlighted FindingItem
         app = RevloApp(report_with_datasheet_specs, schematic_path)
         finding = report_with_datasheet_specs.findings[0]
         finding_item = FindingItem(finding, 0)
 
-        with patch("revlo.tui.app.webbrowser.open") as mock_open:
+        with patch("revlo.tui.app._open_file") as mock_open:
             # Mock query_one to return our mock sidebar with highlighted item
             with patch.object(app, "query_one") as mock_query:
                 mock_sidebar = MagicMock()
@@ -246,16 +246,15 @@ class TestOpenDatasheetAction:
                 # Call the action
                 app.action_open_datasheet()
 
-                # Should have opened the PDF file
+                # Should have opened the PDF file path directly
                 mock_open.assert_called_once()
                 call_args = mock_open.call_args[0][0]
-                assert call_args.startswith("file://")
                 assert "TPS54340.pdf" in call_args
 
     def test_action_open_datasheet_without_spec_does_nothing(
         self, schematic_path: str
     ):
-        """action_open_datasheet should not call webbrowser.open when no spec."""
+        """action_open_datasheet should not call _open_file when no spec."""
         report = ReviewReport(
             findings=[_make_finding(ref="U1", title="Issue")],
             summary="1 finding",
@@ -266,7 +265,7 @@ class TestOpenDatasheetAction:
         app = RevloApp(report, schematic_path)
         finding_item = FindingItem(report.findings[0], 0)
 
-        with patch("revlo.tui.app.webbrowser.open") as mock_open:
+        with patch("revlo.tui.app._open_file") as mock_open:
             with patch.object(app, "query_one") as mock_query:
                 mock_sidebar = MagicMock()
                 mock_sidebar.highlighted_child = finding_item
@@ -281,7 +280,7 @@ class TestOpenDatasheetAction:
     def test_action_open_datasheet_with_nonexistent_pdf_does_nothing(
         self, schematic_path: str
     ):
-        """action_open_datasheet should not call webbrowser.open when PDF doesn't exist."""
+        """action_open_datasheet should not call _open_file when PDF doesn't exist."""
         spec = DatasheetSpec(
             mpn="TEST123",
             manufacturer="Test",
@@ -298,7 +297,7 @@ class TestOpenDatasheetAction:
         app = RevloApp(report, schematic_path)
         finding_item = FindingItem(report.findings[0], 0)
 
-        with patch("revlo.tui.app.webbrowser.open") as mock_open:
+        with patch("revlo.tui.app._open_file") as mock_open:
             with patch.object(app, "query_one") as mock_query:
                 mock_sidebar = MagicMock()
                 mock_sidebar.highlighted_child = finding_item
