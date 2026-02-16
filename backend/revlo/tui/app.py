@@ -87,7 +87,8 @@ def _build_filter_center() -> str:
 
 def _build_filter_right() -> str:
     return (
-        f"[{MUTED_GRAY}]\\[[/][{SOFT_WHITE}]m[/][{MUTED_GRAY}]] export  "
+        f"[{MUTED_GRAY}]\\[[/][{SOFT_WHITE}]o[/][{MUTED_GRAY}]] open pdf  "
+        f"\\[[/][{SOFT_WHITE}]m[/][{MUTED_GRAY}]] export  "
         f"\\[[/][{SOFT_WHITE}]q[/][{MUTED_GRAY}]] quit[/]"
     )
 
@@ -319,7 +320,7 @@ class DetailPanel(Vertical):
                     f"[{SOFT_WHITE}]Pages:[/]      [{WARM_AMBER}]{pages_str}[/]"
                 )
             header_lines.append(
-                f"  [{MUTED_GRAY}]press Enter to open PDF[/]"
+                f"  [{MUTED_GRAY}]press O to open PDF[/]"
             )
 
         self.query_one("#detail-placeholder", Static).styles.display = "none"
@@ -392,7 +393,7 @@ class RevloApp(App[None]):
         Binding("s", "filter_suggestions", "Suggestions", show=False),
         Binding("a", "filter_all", "All", show=False),
         Binding("m", "export_markdown", "Export MD", show=False),
-        Binding("enter", "open_datasheet", "Open URL", show=False),
+        Binding("o", "open_datasheet", "Open PDF", show=False),
     ]
 
     active_filter: reactive[str] = reactive("all")
