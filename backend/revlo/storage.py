@@ -46,6 +46,39 @@ def save_review(report: ReviewReport, schematic_path: str) -> Path:
     return out_path
 
 
+def save_chat(
+    messages: list[dict],
+    schematic_path: str,
+) -> Path:
+    """Save chat conversation as JSON in .revlo/ next to the schematic.
+
+    Filename format: {stem}-chat-{timestamp}.json
+    Returns the path to the saved file.
+
+    ``messages`` should be a list of dicts with keys: role, content, timestamp.
+    """
+    sch = Path(schematic_path)
+    revlo_dir = sch.parent / ".revlo"
+    revlo_dir.mkdir(exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    filename = f"{sch.stem}-chat-{timestamp}.json"
+    out_path = revlo_dir / filename
+
+    data: dict = {
+        "messages": messages,
+        "_meta": {
+            "schematic": sch.name,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "revlo_version": "0.1.0",
+            "type": "chat",
+        },
+    }
+
+    out_path.write_text(json.dumps(data, indent=2))
+    return out_path
+
+
 def load_latest_review(schematic_path: str) -> tuple[ReviewReport, dict] | None:
     """Load the most recent review for a schematic.
 

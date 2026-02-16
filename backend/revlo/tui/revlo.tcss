@@ -155,6 +155,50 @@ SeverityGroupHeader:disabled {
     color: #E8ECF1;
 }
 
+/* -- Chat panel ----------------------------------------------------------- */
+
+#chat-panel {
+    width: 1fr;
+    height: 100%;
+    background: #0A1628;
+    padding: 1 2;
+}
+
+#chat-header {
+    width: 1fr;
+    height: auto;
+    margin-bottom: 1;
+}
+
+#chat-scroll {
+    width: 1fr;
+    height: 1fr;
+    background: #0A1628;
+    scrollbar-color: #2A3A50;
+    scrollbar-color-hover: #00D4AA;
+    scrollbar-background: #0A1628;
+}
+
+#chat-input {
+    width: 1fr;
+    height: 3;
+    margin-top: 1;
+    background: #0F1929;
+    color: #E8ECF1;
+    border: solid #2A3A50;
+}
+
+#chat-input:focus {
+    border: solid #00D4AA;
+}
+
+.chat-context-banner {
+    width: 1fr;
+    padding: 0 1;
+    margin-bottom: 1;
+    color: #6B7B8D;
+}
+
 /* -- Empty state ---------------------------------------------------------- */
 
 #empty-state {

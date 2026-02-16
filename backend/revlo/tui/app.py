@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,13 +11,15 @@ from textual.binding import Binding
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import Label, ListItem, ListView, Static
+from textual.widgets import Input, Label, ListItem, ListView, Static
 
 from revlo.report.markdown import generate_markdown_report
 from revlo.reviewer.models import Finding, ReviewReport, Severity
 
 if TYPE_CHECKING:
     from revlo.datasheet.models import DatasheetSpec
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Brand colours
@@ -69,13 +72,14 @@ def _build_filter_center() -> str:
         f"  [{SIGNAL_RED}]e[/][{MUTED_GRAY}]rrors[/]"
         f"  [{WARM_AMBER}]w[/][{MUTED_GRAY}]arnings[/]"
         f"  [{ELECTRIC_TEAL}]s[/][{MUTED_GRAY}]uggestions[/]"
-        f"  [{SOFT_WHITE}]a[/][{MUTED_GRAY}]ll[/]"
+        f"  [{SOFT_WHITE}]f[/][{MUTED_GRAY}]ilter all[/]"
     )
 
 
 def _build_filter_right() -> str:
     return (
-        f"[{MUTED_GRAY}]\\[[/][{SOFT_WHITE}]o[/][{MUTED_GRAY}]] open pdf  "
+        f"[{MUTED_GRAY}]\\[[/][{ELECTRIC_TEAL}]a[/][{MUTED_GRAY}]] ask  "
+        f"\\[[/][{SOFT_WHITE}]o[/][{MUTED_GRAY}]] open pdf  "
         f"\\[[/][{SOFT_WHITE}]m[/][{MUTED_GRAY}]] export  "
         f"\\[[/][{SOFT_WHITE}]q[/][{MUTED_GRAY}]] quit[/]"
     )
@@ -373,18 +377,20 @@ class RevloApp(App[None]):
 
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
-        Binding("escape", "quit", "Quit", show=False),
+        Binding("escape", "escape_key", "Escape", show=False),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
         Binding("e", "filter_errors", "Errors", show=False),
         Binding("w", "filter_warnings", "Warnings", show=False),
         Binding("s", "filter_suggestions", "Suggestions", show=False),
-        Binding("a", "filter_all", "All", show=False),
+        Binding("f", "filter_all", "All", show=False),
+        Binding("a", "ask", "Ask", show=False),
         Binding("m", "export_markdown", "Export MD", show=False),
         Binding("o", "open_datasheet", "Open PDF", show=False),
     ]
 
     active_filter: reactive[str] = reactive("all")
+    _chat_mode: reactive[bool] = reactive(False)
 
     def __init__(
         self,
@@ -396,6 +402,8 @@ class RevloApp(App[None]):
         self.report = report
         self.schematic_path = schematic_path
         self._sorted_findings = self._sort_findings(report.findings)
+        self._chat_panel = None
+        self._conversation: list[dict] = []  # API-format messages
 
     @staticmethod
     def _sort_findings(findings: list[Finding]) -> list[Finding]:
@@ -441,12 +449,16 @@ class RevloApp(App[None]):
     # -- events --
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if self._chat_mode:
+            return
         item = event.item
         if isinstance(item, FindingItem):
             panel = self.query_one("#detail-panel", DetailPanel)
             panel.show_finding(item.finding)
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if self._chat_mode:
+            return
         item = event.item
         if isinstance(item, FindingItem):
             try:
@@ -455,9 +467,30 @@ class RevloApp(App[None]):
             except Exception:
                 pass
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle Enter in the chat input."""
+        if not self._chat_mode or self._chat_panel is None:
+            return
+        text = event.value.strip()
+        if not text:
+            return
+        event.input.value = ""
+        self._send_chat_message(text)
+
+    # -- escape handling --
+
+    def action_escape_key(self) -> None:
+        """Handle Escape: exit chat mode or quit the app."""
+        if self._chat_mode:
+            self._exit_chat_mode()
+        else:
+            self.exit()
+
     # -- filter actions --
 
     def _apply_filter(self, filter_name: str) -> None:
+        if self._chat_mode:
+            return
         self.active_filter = filter_name
         try:
             sidebar = self.query_one("#sidebar", FindingsSidebar)
@@ -484,6 +517,8 @@ class RevloApp(App[None]):
     # -- navigation --
 
     def action_cursor_down(self) -> None:
+        if self._chat_mode:
+            return
         try:
             sidebar = self.query_one("#sidebar", FindingsSidebar)
             sidebar.action_cursor_down()
@@ -491,15 +526,189 @@ class RevloApp(App[None]):
             pass
 
     def action_cursor_up(self) -> None:
+        if self._chat_mode:
+            return
         try:
             sidebar = self.query_one("#sidebar", FindingsSidebar)
             sidebar.action_cursor_up()
         except Exception:
             pass
 
+    # -- ask mode --
+
+    def action_ask(self) -> None:
+        """Enter chat / ask mode."""
+        if self._chat_mode:
+            return
+        self._enter_chat_mode()
+
+    def _get_highlighted_finding(self) -> Finding | None:
+        """Return the currently highlighted finding, if any."""
+        try:
+            sidebar = self.query_one("#sidebar", FindingsSidebar)
+            highlighted = sidebar.highlighted_child
+            if isinstance(highlighted, FindingItem):
+                return highlighted.finding
+        except Exception:
+            pass
+        return None
+
+    def _enter_chat_mode(self) -> None:
+        """Show the chat panel, hiding the detail panel."""
+        from revlo.tui.chat import ChatPanel
+
+        self._chat_mode = True
+
+        # Hide detail panel
+        try:
+            detail = self.query_one("#detail-panel", DetailPanel)
+            detail.styles.display = "none"
+        except Exception:
+            pass
+
+        # Build initial context from highlighted finding
+        initial_context = ""
+        finding = self._get_highlighted_finding()
+        if finding is not None:
+            initial_context = (
+                f"[{finding.severity.value.upper()}] {finding.component_ref}: "
+                f"{finding.title} -- {finding.description}"
+            )
+
+        # Create and mount chat panel into main-container
+        try:
+            container = self.query_one("#main-container", Horizontal)
+        except Exception:
+            # No main container (empty report) -- mount at app level before filter bar
+            container = None
+
+        chat = ChatPanel(initial_context=initial_context, id="chat-panel")
+        self._chat_panel = chat
+
+        if container is not None:
+            container.mount(chat)
+        else:
+            # Mount before filter bar
+            try:
+                fbar = self.query_one("#filter-bar", FilterBar)
+                self.mount(chat, before=fbar)
+            except Exception:
+                self.mount(chat)
+
+    def _exit_chat_mode(self) -> None:
+        """Return to findings detail view, saving the conversation."""
+        self._chat_mode = False
+
+        # Save conversation if there are messages
+        if self._chat_panel is not None and self._chat_panel.messages:
+            self._save_conversation()
+
+        # Remove chat panel
+        if self._chat_panel is not None:
+            self._chat_panel.remove()
+            self._chat_panel = None
+
+        # Show detail panel
+        try:
+            detail = self.query_one("#detail-panel", DetailPanel)
+            detail.styles.display = "block"
+        except Exception:
+            pass
+
+        # Clear conversation history for next session
+        self._conversation = []
+
+    def _save_conversation(self) -> None:
+        """Save the current chat conversation to disk."""
+        if self._chat_panel is None:
+            return
+        messages = [m.to_dict() for m in self._chat_panel.messages]
+        if not messages:
+            return
+        try:
+            from revlo.storage import save_chat
+            path = save_chat(messages, self.schematic_path)
+            self.notify(f"Chat saved to {path.name}")
+        except Exception:
+            logger.warning("Failed to save chat conversation", exc_info=True)
+
+    def _send_chat_message(self, text: str) -> None:
+        """Send a user message to Claude and stream the response."""
+        if self._chat_panel is None:
+            return
+
+        # Add user message to UI
+        self._chat_panel.add_user_message(text)
+        self._chat_panel.set_input_enabled(False)
+
+        # Add to API conversation history
+        self._conversation.append({"role": "user", "content": text})
+
+        # Start streaming assistant response
+        self._chat_panel.start_assistant_message()
+        self._stream_response()
+
+    @property
+    def _system_prompt(self) -> str:
+        """Build the system prompt for the ask-mode chat."""
+        from revlo.tui.chat import build_ask_system_prompt
+        return build_ask_system_prompt(
+            report=self.report,
+            datasheet_specs=self.report.datasheet_specs,
+        )
+
+    def _stream_response(self) -> None:
+        """Start the async streaming worker."""
+        self.run_worker(
+            self._do_stream(),
+            name="chat_stream",
+            exclusive=True,
+        )
+
+    async def _do_stream(self) -> None:
+        """Async worker that streams the Claude response."""
+        import anthropic
+
+        client = anthropic.AsyncAnthropic()
+        full_text = ""
+
+        try:
+            async with client.messages.stream(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=4096,
+                system=self._system_prompt,
+                messages=list(self._conversation),
+            ) as stream:
+                async for text in stream.text_stream:
+                    full_text += text
+                    if self._chat_panel is not None:
+                        self.call_from_thread(
+                            self._chat_panel.update_assistant_stream,
+                            full_text,
+                        )
+        except Exception as exc:
+            logger.warning("Chat stream failed: %s", exc, exc_info=True)
+            full_text = full_text or f"Error: could not reach Claude. ({exc})"
+
+        # Finalize the message
+        if self._chat_panel is not None:
+            self.call_from_thread(
+                self._chat_panel.finish_assistant_message,
+                full_text,
+            )
+            self.call_from_thread(
+                self._chat_panel.set_input_enabled,
+                True,
+            )
+
+        # Add to conversation history
+        self._conversation.append({"role": "assistant", "content": full_text})
+
     # -- export / open --
 
     def action_export_markdown(self) -> None:
+        if self._chat_mode:
+            return
         stem = Path(self.schematic_path).stem
         out_path = Path(self.schematic_path).parent / f"{stem}-review.md"
         md = generate_markdown_report(self.report)
@@ -507,6 +716,8 @@ class RevloApp(App[None]):
         self.notify(f"Exported to {out_path.name}")
 
     def action_open_datasheet(self) -> None:
+        if self._chat_mode:
+            return
         try:
             sidebar = self.query_one("#sidebar", FindingsSidebar)
         except Exception:
@@ -529,3 +740,10 @@ class RevloApp(App[None]):
             self.notify(f"Opening datasheet for {ref} (p.{spec.relevant_pages[0]})" if spec.relevant_pages else f"Opening datasheet for {ref}")
         else:
             self.notify("No datasheet available for this finding.")
+
+    def action_quit(self) -> None:
+        """Override quit to save chat before exiting."""
+        if self._chat_mode and self._chat_panel is not None:
+            if self._chat_panel.messages:
+                self._save_conversation()
+        self.exit()

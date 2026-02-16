@@ -300,15 +300,15 @@ class TestFilterKeys:
             assert items[0].finding.severity == Severity.suggestion
 
     @pytest.mark.asyncio
-    async def test_a_shows_all(
+    async def test_f_shows_all(
         self, sample_report: ReviewReport, schematic_path: str
     ):
         app = RevloApp(sample_report, schematic_path)
         async with app.run_test() as pilot:
-            # First filter down, then press 'a' to show all
+            # First filter down, then press 'f' to show all
             await pilot.press("e")
             await pilot.pause()
-            await pilot.press("a")
+            await pilot.press("f")
             await pilot.pause()
             sidebar = app.query_one("#sidebar", FindingsSidebar)
             items = sidebar.query(FindingItem)
