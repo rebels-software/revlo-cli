@@ -4,10 +4,25 @@ version = "0.1.0"
 description = "AI-powered design review for KiCad schematics"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Bart Szczepanski" },
+    { name = "Rebels Software", email = "hello@rebels.software" },
+]
+keywords = ["kicad", "eda", "schematic", "review", "electronics", "hardware"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Manufacturing",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
 dependencies = [
     "anthropic>=0.78.0",
-    "claude-agent-sdk>=0.1.36",
-    "fastapi>=0.128.2",
     "httpx>=0.28.1",
     "kicad-sch-api>=0.5.6",
     "kiutils>=1.4.8",
@@ -16,7 +31,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "rich>=13.0.0",
     "textual>=0.89.0",
-    "uvicorn>=0.40.0",
 ]
 
 [dependency-groups]
@@ -28,6 +42,11 @@ dev = [
 
 [project.scripts]
 revlo = "revlo.cli:main"
+
+[project.urls]
+Homepage = "https://revlo.review"
+Repository = "https://github.com/rebels-software/revlo-cli"
+Issues = "https://github.com/rebels-software/revlo-cli/issues"
 
 [build-system]
 requires = ["hatchling"]
