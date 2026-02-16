@@ -194,23 +194,22 @@ class MessageBubble(Static):
     def __init__(self, role: str, content: str, **kwargs) -> None:
         self._role = role
         self._content = content
-        super().__init__(**kwargs)
+        # Pass formatted content to Static.__init__ so the widget has
+        # correct dimensions from the very first layout calculation.
+        super().__init__(self._format_content(), **kwargs)
 
-    def on_mount(self) -> None:
-        self._render_content()
-
-    def _render_content(self) -> None:
+    def _format_content(self) -> str:
         if self._role == "user":
-            formatted = f"[bold {SOFT_WHITE}]You:[/] [{LIGHT_GRAY}]{self._content}[/]"
+            return f"[bold {SOFT_WHITE}]You:[/] [{LIGHT_GRAY}]{self._content}[/]"
         else:
             marked = markup_response(self._content)
-            formatted = f"[bold {ELECTRIC_TEAL}]Revlo:[/] {marked}"
-        self.update(formatted)
+            return f"[bold {ELECTRIC_TEAL}]Revlo:[/] {marked}"
 
     def update_content(self, content: str) -> None:
         """Update the message content (used during streaming)."""
         self._content = content
-        self._render_content()
+        self.update(self._format_content())
+        self.refresh(layout=True)  # height changes as streaming text grows
 
 
 class ChatPanel(Vertical):
@@ -259,16 +258,14 @@ class ChatPanel(Vertical):
         scroll = self.query_one("#chat-scroll", VerticalScroll)
         scroll.mount(MessageBubble("user", text))
         scroll.scroll_end(animate=False)
-        self.refresh(layout=True)
 
     def start_assistant_message(self) -> None:
         """Add a placeholder for the assistant response (for streaming)."""
         scroll = self.query_one("#chat-scroll", VerticalScroll)
-        bubble = MessageBubble("assistant", f"[{MUTED_GRAY}]Thinking...[/]")
+        bubble = MessageBubble("assistant", "Thinking...")
         self._streaming_bubble = bubble
         scroll.mount(bubble)
         scroll.scroll_end(animate=False)
-        self.refresh(layout=True)
 
     def update_assistant_stream(self, text: str) -> None:
         """Update the streaming assistant message with new text."""
