@@ -84,6 +84,14 @@ async def _process_component(
             status_callback(ref, mpn, "cached")
         if cached.pdf_path:
             cached.spec.pdf_path = cached.pdf_path
+        # Backfill relevant_pages for cache entries from before this field existed
+        if not cached.spec.relevant_pages and cached.spec.pdf_path:
+            pdf_p = Path(cached.spec.pdf_path)
+            if pdf_p.exists():
+                _, pages = extract_text(pdf_p)
+                cached.spec.relevant_pages = pages
+                # Update cache so we don't re-extract next time
+                cache.put(mpn, cached)
         return cached.spec
 
     # 2. Scan for manually placed PDFs before attempting URL resolution.

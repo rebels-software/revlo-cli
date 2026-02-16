@@ -299,12 +299,14 @@ class DetailPanel(Vertical):
         if spec and spec.pdf_path:
             pdf_name = Path(spec.pdf_path).name
             header_lines.append(
-                f"[{SOFT_WHITE}]Datasheet:[/]  [{LIGHT_GRAY}]{pdf_name}[/]"
+                f"[{SOFT_WHITE}]Datasheet:[/]  [underline {ELECTRIC_TEAL}]{pdf_name}[/]"
+                f"  [{MUTED_GRAY}]Enter \u21b5[/]"
             )
             if spec.relevant_pages:
                 pages_str = self._format_pages(spec.relevant_pages)
                 header_lines.append(
-                    f"[{SOFT_WHITE}]Pages:[/]      [{LIGHT_GRAY}]{pages_str}[/]"
+                    f"[{SOFT_WHITE}]Pages:[/]      [{ELECTRIC_TEAL}]{pages_str}[/]"
+                    f"  [{MUTED_GRAY}]Enter \u21b5[/]"
                 )
 
         self.query_one("#detail-placeholder", Static).styles.display = "none"
