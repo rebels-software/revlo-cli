@@ -93,6 +93,11 @@ def format_chunk_data(chunk: ReviewChunk) -> str:
         lines = ["## Datasheet Specifications"]
         for ref, spec in sorted(chunk.datasheet_specs.items()):
             lines.append(f"### {ref}: {spec.mpn}")
+            if spec.pdf_path:
+                pages_str = ", ".join(str(p) for p in spec.relevant_pages[:20])
+                lines.append(f"- Datasheet PDF: file://{spec.pdf_path}")
+                if spec.relevant_pages:
+                    lines.append(f"- Relevant pages: {pages_str}")
             if spec.manufacturer:
                 lines.append(f"- Manufacturer: {spec.manufacturer}")
             if spec.description:
@@ -135,7 +140,12 @@ If datasheet specifications are provided above, use them to verify:
 - Component values match datasheet recommended values
 - Pin connections match datasheet pin functions
 - Operating conditions are within datasheet limits
-- Required external components (caps, resistors) are present per datasheet"""
+- Required external components (caps, resistors) are present per datasheet
+
+When your recommendation is based on datasheet information, cite the relevant \
+page number(s) in the recommendation. Format example: \
+'See datasheet p.42 for recommended decoupling capacitor values.' \
+If a PDF path is provided, include it as a reference link."""
 
 
 def _build_ic_context_prompt(chunk: ReviewChunk) -> str:

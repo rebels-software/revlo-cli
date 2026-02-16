@@ -191,7 +191,7 @@ async def test_full_pipeline_success(
 
     mock_resolve.return_value = "https://example.com/lm7805.pdf"
     mock_download.return_value = pdf_path
-    mock_extract_text.return_value = "LM7805 datasheet text..."
+    mock_extract_text.return_value = ("LM7805 datasheet text...", [1, 2, 3])
     spec = _make_spec("LM7805CT", "5V Regulator")
     mock_extract_spec.return_value = spec
 
@@ -199,7 +199,8 @@ async def test_full_pipeline_success(
     result = await enrich_schematic(parsed, tmp_path)
 
     # Assertions.
-    assert result == {"U2": spec}
+    assert "U2" in result
+    assert result["U2"].mpn == spec.mpn
     mock_cache_instance.get.assert_called_with("LM7805CT")
     mock_resolve.assert_called_once_with(normalized, cache_dir=str(tmp_path))
     mock_download.assert_called_once_with("https://example.com/lm7805.pdf", tmp_path)
@@ -310,7 +311,7 @@ async def test_extract_text_returns_empty_skips_component(
     mock_resolve.return_value = "https://example.com/notext.pdf"
     mock_download.return_value = pdf_path
     # Text extraction returns empty string.
-    mock_extract_text.return_value = ""
+    mock_extract_text.return_value = ("", [])
 
     result = await enrich_schematic(parsed, tmp_path)
 
@@ -351,7 +352,7 @@ async def test_extract_spec_returns_none_skips_component(
 
     mock_resolve.return_value = "https://example.com/nospec.pdf"
     mock_download.return_value = pdf_path
-    mock_extract_text.return_value = "Some text but extraction fails"
+    mock_extract_text.return_value = ("Some text but extraction fails", [1])
     # Spec extraction returns None.
     mock_extract_spec.return_value = None
 
@@ -426,7 +427,7 @@ async def test_mixed_generic_cached_resolved(
 
     mock_resolve.return_value = "https://example.com/lm358.pdf"
     mock_download.return_value = pdf_path
-    mock_extract_text.return_value = "LM358 text"
+    mock_extract_text.return_value = ("LM358 text", [1, 2])
     resolved_spec = _make_spec("LM358P", "Op-Amp")
     mock_extract_spec.return_value = resolved_spec
 
@@ -508,7 +509,7 @@ async def test_partial_success_multiple_components(
         return None
 
     mock_download.side_effect = download_side_effect
-    mock_extract_text.side_effect = ["Text1", "Text2"]
+    mock_extract_text.side_effect = [("Text1", [1, 2]), ("Text2", [1, 2])]
 
     spec1 = _make_spec("Success1")
     spec2 = _make_spec("Success2")
@@ -580,7 +581,7 @@ async def test_concurrent_processing_multiple_components(
         pdfs.append(pdf)
 
     mock_download.side_effect = pdfs
-    mock_extract_text.side_effect = [f"Text{i}" for i in range(1, 4)]
+    mock_extract_text.side_effect = [(f"Text{i}", [1, 2]) for i in range(1, 4)]
     mock_extract_spec.side_effect = [
         _make_spec(f"Part{i}") for i in range(1, 4)
     ]

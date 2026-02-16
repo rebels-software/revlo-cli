@@ -211,7 +211,7 @@ class TestProgressCallback:
 
         mock_resolve.return_value = "https://example.com/ds.pdf"
         mock_download.return_value = tmp_path / "ds.pdf"
-        mock_extract_text.return_value = "PDF text content"
+        mock_extract_text.return_value = ("PDF text content", [1, 2, 3])
         mock_extract_spec.return_value = mock_spec
 
         calls: list[tuple[int, int]] = []
@@ -324,7 +324,7 @@ class TestManualPdfFallback:
         cache_instance = MockCache.return_value
         cache_instance.get.return_value = None  # No cache hit
 
-        mock_extract_text.return_value = "PDF text content from manual PDF"
+        mock_extract_text.return_value = ("PDF text content from manual PDF", [1, 2])
         mock_extract_spec.return_value = mock_spec
 
         result = asyncio.run(enrich_schematic(simple_schematic, tmp_path))
@@ -367,7 +367,7 @@ class TestManualPdfFallback:
 
         mock_resolve.return_value = "https://example.com/ds.pdf"
         mock_download.return_value = tmp_path / "ds.pdf"
-        mock_extract_text.return_value = "PDF text"
+        mock_extract_text.return_value = ("PDF text", [1])
         mock_extract_spec.return_value = mock_spec
 
         result = asyncio.run(enrich_schematic(simple_schematic, tmp_path))
@@ -402,7 +402,7 @@ class TestManualPdfFallback:
         cache_instance = MockCache.return_value
         cache_instance.get.return_value = None
 
-        mock_extract_text.return_value = "PDF text"
+        mock_extract_text.return_value = ("PDF text", [1])
         mock_extract_spec.return_value = mock_spec
 
         asyncio.run(enrich_schematic(simple_schematic, tmp_path))
@@ -473,7 +473,7 @@ class TestStatusCallback:
         cache_instance = MockCache.return_value
         cache_instance.get.return_value = None
 
-        mock_extract_text.return_value = "PDF text"
+        mock_extract_text.return_value = ("PDF text", [1])
         mock_extract_spec.return_value = mock_spec
 
         statuses: list[tuple[str, str, str]] = []
@@ -515,7 +515,7 @@ class TestStatusCallback:
 
         mock_resolve.return_value = "https://example.com/ds.pdf"
         mock_download.return_value = tmp_path / "ds.pdf"
-        mock_extract_text.return_value = "PDF text"
+        mock_extract_text.return_value = ("PDF text", [1])
         mock_extract_spec.return_value = mock_spec
 
         statuses: list[tuple[str, str, str]] = []

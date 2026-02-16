@@ -232,7 +232,7 @@ def _select_pages_by_keyword_scan(doc: pymupdf.Document) -> list[int]:
 # ---------------------------------------------------------------------------
 
 
-def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
+def extract_text(pdf_path: Path, max_pages: int = 30) -> tuple[str, list[int]]:
     """Extract text from a PDF using PyMuPDF.
 
     For **small PDFs** (<= *max_pages* pages) the behaviour is unchanged:
@@ -248,13 +248,17 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
     3. The first ``_ALWAYS_INCLUDE_PAGES`` pages are always included.
 
     Total output is capped at ``_PDF_TEXT_LIMIT`` characters.
-    Returns an empty string on any error.
+
+    Returns:
+        A tuple of (extracted_text, pages) where *pages* is a sorted list
+        of 1-based page numbers that were selected for extraction.
+        Returns ``("", [])`` on any error.
     """
     try:
         doc = pymupdf.open(str(pdf_path))
     except Exception as exc:
         logger.warning("Failed to open PDF %s: %s", pdf_path, exc)
-        return ""
+        return ("", [])
 
     total_pages = len(doc)
 
@@ -271,7 +275,8 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
                     logger.warning(
                         "Failed to extract page %d from %s: %s", i, pdf_path, exc
                     )
-            return "\n".join(parts)
+            all_pages = list(range(1, total_pages + 1))
+            return ("\n".join(parts), all_pages)
 
         # --- Large PDF: smart page selection --------------------------------
         # Always include the first N pages.
@@ -305,6 +310,7 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
         # Extract text from selected pages (sorted, deduplicated).
         parts = []
         char_count = 0
+        extracted_indices: list[int] = []
         for i in sorted(selected):
             if i >= total_pages:
                 continue
@@ -316,14 +322,18 @@ def extract_text(pdf_path: Path, max_pages: int = 30) -> str:
                         remaining = _PDF_TEXT_LIMIT - char_count
                         if remaining > 0:
                             parts.append(text[:remaining])
+                            extracted_indices.append(i)
                         break
                     parts.append(text)
                     char_count += len(text)
+                    extracted_indices.append(i)
             except Exception as exc:
                 logger.warning(
                     "Failed to extract page %d from %s: %s", i, pdf_path, exc
                 )
 
-        return "\n".join(parts)
+        # Convert 0-based indices to 1-based page numbers.
+        pages_1based = [i + 1 for i in extracted_indices]
+        return ("\n".join(parts), pages_1based)
     finally:
         doc.close()

@@ -18,7 +18,7 @@ Each chunk contains:
 - **Components**: reference designators, values, pin lists, footprints
 - **Nets**: net names, pin connections, power/signal classification
 - **Unconnected Pins**: pins with no net connection
-- **Datasheet Specifications** (when available): MPN, voltage ranges, pin functions, ratings
+- **Datasheet Specifications** (when available): MPN, voltage ranges, pin functions, ratings, PDF path, relevant page numbers
 
 Review EVERY chunk against ALL applicable checklist items below. Be thorough.
 
@@ -300,6 +300,7 @@ If you find the same issue from multiple checklist domains (e.g., both Signal In
 - Prefer actionable recommendations over vague advice.
 - NEVER report meta-findings about the schematic data itself (e.g., "incomplete data", "missing net info"). The data provided is complete -- focus exclusively on hardware design issues.
 - Be thorough: report every potential design issue you can identify, even if you are not fully certain. Use the `confidence` field to express certainty rather than omitting uncertain findings.
+- When your recommendation is based on datasheet information, cite the relevant page number(s). Format example: 'See datasheet p.42 for recommended decoupling capacitor values.' If a PDF path is provided, include it as a reference link.
 
 ## Example Findings
 

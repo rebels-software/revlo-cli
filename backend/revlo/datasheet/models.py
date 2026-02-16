@@ -31,6 +31,8 @@ class DatasheetSpec(BaseModel):
     absolute_max_ratings: dict[str, str] = Field(default_factory=dict)
     recommended_operating: dict[str, str] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
+    pdf_path: str = ""
+    relevant_pages: list[int] = Field(default_factory=list)
 
 
 class DatasheetCacheEntry(BaseModel):

@@ -82,6 +82,8 @@ async def _process_component(
         logger.info("[%s] Cache hit for %s", ref, mpn)
         if status_callback:
             status_callback(ref, mpn, "cached")
+        if cached.pdf_path:
+            cached.spec.pdf_path = cached.pdf_path
         return cached.spec
 
     # 2. Scan for manually placed PDFs before attempting URL resolution.
@@ -119,7 +121,7 @@ async def _process_component(
 
     # 5. Extract text from PDF.
     logger.info("[%s] Extracting text from PDF ...", ref)
-    pdf_text = extract_text(pdf_path)
+    pdf_text, pages = extract_text(pdf_path)
     if not pdf_text:
         logger.warning("[%s] No text extracted from PDF", ref)
         return None
@@ -131,6 +133,10 @@ async def _process_component(
         logger.warning("[%s] Spec extraction failed for %s", ref, mpn)
         return None
     logger.info("[%s] Spec extracted successfully", ref)
+
+    # Attach PDF metadata to the spec.
+    spec.pdf_path = str(pdf_path.resolve())
+    spec.relevant_pages = pages
 
     # 7. Store in cache.
     source_url = url if manual_pdf is None else ""

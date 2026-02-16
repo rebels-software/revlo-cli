@@ -393,74 +393,84 @@ class TestExtractText:
         pdf_path = tmp_path / "single.pdf"
         _create_test_pdf(pdf_path, num_pages=1, text_per_page="Hello World")
 
-        result = extract_text(pdf_path)
+        text, pages = extract_text(pdf_path)
 
-        assert "Hello World" in result
-        assert "Page 1" in result
+        assert "Hello World" in text
+        assert "Page 1" in text
+        assert pages == [1]
 
     def test_extract_text_from_multi_page_pdf(self, tmp_path):
         """extract_text reads text from all pages of a multi-page PDF."""
         pdf_path = tmp_path / "multi.pdf"
         _create_test_pdf(pdf_path, num_pages=3, text_per_page="Content")
 
-        result = extract_text(pdf_path)
+        text, pages = extract_text(pdf_path)
 
-        assert "Page 1" in result
-        assert "Page 2" in result
-        assert "Page 3" in result
-        assert result.count("Content") == 3
+        assert "Page 1" in text
+        assert "Page 2" in text
+        assert "Page 3" in text
+        assert text.count("Content") == 3
+        assert pages == [1, 2, 3]
 
     def test_extract_text_respects_max_pages(self, tmp_path):
         """extract_text only reads up to max_pages."""
         pdf_path = tmp_path / "many.pdf"
         _create_test_pdf(pdf_path, num_pages=10, text_per_page="Sample")
 
-        result = extract_text(pdf_path, max_pages=3)
+        text, pages = extract_text(pdf_path, max_pages=3)
 
-        assert "Page 1" in result
-        assert "Page 2" in result
-        assert "Page 3" in result
-        assert "Page 4" not in result
-        assert result.count("Sample") == 3
+        assert "Page 1" in text
+        assert "Page 2" in text
+        assert "Page 3" in text
+        assert "Page 4" not in text
+        assert text.count("Sample") == 3
+        # max_pages=3, so pages 4-10 trigger smart selection, but first 3 always included
+        assert 1 in pages
+        assert 2 in pages
+        assert 3 in pages
 
     def test_extract_text_default_max_pages_is_30(self, tmp_path):
         """extract_text reads all pages for PDFs with <= max_pages (small PDF path)."""
         pdf_path = tmp_path / "medium.pdf"
         _create_test_pdf(pdf_path, num_pages=30, text_per_page="Text")
 
-        result = extract_text(pdf_path)
+        text, pages = extract_text(pdf_path)
 
         # All 30 pages should be read (small-PDF path)
-        assert "Page 30" in result
-        assert "Page 1" in result
+        assert "Page 30" in text
+        assert "Page 1" in text
+        assert pages == list(range(1, 31))
 
-    def test_extract_text_returns_empty_string_for_nonexistent_file(self, tmp_path):
-        """extract_text returns empty string for files that don't exist."""
+    def test_extract_text_returns_empty_for_nonexistent_file(self, tmp_path):
+        """extract_text returns empty tuple for files that don't exist."""
         pdf_path = tmp_path / "nonexistent.pdf"
 
-        result = extract_text(pdf_path)
+        text, pages = extract_text(pdf_path)
 
-        assert result == ""
+        assert text == ""
+        assert pages == []
 
     def test_extract_text_handles_corrupted_pdf(self, tmp_path):
-        """extract_text returns empty string for corrupted PDF files."""
+        """extract_text returns empty tuple for corrupted PDF files."""
         pdf_path = tmp_path / "corrupted.pdf"
         pdf_path.write_bytes(b"Not a valid PDF file")
 
-        result = extract_text(pdf_path)
+        text, pages = extract_text(pdf_path)
 
-        assert result == ""
+        assert text == ""
+        assert pages == []
 
     def test_extract_text_concatenates_pages_with_newline(self, tmp_path):
         """extract_text joins pages with newline separator."""
         pdf_path = tmp_path / "test.pdf"
         _create_test_pdf(pdf_path, num_pages=2, text_per_page="Line")
 
-        result = extract_text(pdf_path)
+        text, pages = extract_text(pdf_path)
 
         # Should have newline between pages
-        lines = result.split("\n")
+        lines = text.split("\n")
         assert len(lines) >= 2
+        assert pages == [1, 2]
 
     def test_extract_text_empty_pdf(self, tmp_path):
         """extract_text handles PDFs with no extractable text gracefully."""
@@ -471,10 +481,12 @@ class TestExtractText:
         doc.save(str(pdf_path))
         doc.close()
 
-        result = extract_text(pdf_path)
+        text, pages = extract_text(pdf_path)
 
         # PDF with no text should return empty string
-        assert result == ""
+        assert text == ""
+        # Pages list still reports all pages for small PDFs
+        assert pages == [1]
 
 
 # ---------------------------------------------------------------------------
@@ -649,11 +661,12 @@ class TestSmartPageSelection:
         pdf_path = tmp_path / "small.pdf"
         _create_test_pdf(pdf_path, num_pages=25, text_per_page="SmallPDF")
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, pages = extract_text(pdf_path, max_pages=30)
 
         # All 25 pages should be present
         for i in range(1, 26):
-            assert f"Page {i}" in result
+            assert f"Page {i}" in text
+        assert pages == list(range(1, 26))
 
     def test_large_pdf_with_bookmarks_selects_target_sections(self, tmp_path):
         """Large PDF with bookmarks: only target sections + first 3 pages extracted."""
@@ -680,22 +693,27 @@ class TestSmartPageSelection:
             pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, pages = extract_text(pdf_path, max_pages=30)
 
         # First 3 pages always included
-        assert "Overview - Page 1" in result
-        assert "Features summary - Page 2" in result
-        assert "Block diagram - Page 3" in result
+        assert "Overview - Page 1" in text
+        assert "Features summary - Page 2" in text
+        assert "Block diagram - Page 3" in text
 
         # Absolute max section (pages 20-29, 0-based 19-28)
-        assert "Absolute maximum ratings VCC=4.0V" in result
+        assert "Absolute maximum ratings VCC=4.0V" in text
 
         # Electrical characteristics section (pages 30-39, 0-based 29-38)
-        assert "Electrical characteristics DC" in result
-        assert "Electrical characteristics AC" in result
+        assert "Electrical characteristics DC" in text
+        assert "Electrical characteristics AC" in text
 
         # Package info section should NOT be included (no matching bookmark)
-        assert "Package dimensions" not in result
+        assert "Package dimensions" not in text
+
+        # Pages list should be 1-based and sorted
+        assert 1 in pages  # first 3 always included
+        assert 20 in pages  # abs max section
+        assert 30 in pages  # elec char section
 
     def test_large_pdf_keyword_fallback_when_no_bookmarks(self, tmp_path):
         """Large PDF without bookmarks falls back to keyword scanning."""
@@ -712,19 +730,23 @@ class TestSmartPageSelection:
             pdf_path, num_pages=50, bookmarks=None, page_texts=page_texts
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, pages = extract_text(pdf_path, max_pages=30)
 
         # First 3 pages always included
-        assert "Product Overview" in result
-        assert "Features" in result
-        assert "Pinout" in result
+        assert "Product Overview" in text
+        assert "Features" in text
+        assert "Pinout" in text
 
         # Keyword-matched pages
-        assert "Absolute maximum ratings table" in result
-        assert "Electrical characteristics data" in result
+        assert "Absolute maximum ratings table" in text
+        assert "Electrical characteristics data" in text
 
         # Non-matching pages excluded
-        assert "Package outline drawing" not in result
+        assert "Package outline drawing" not in text
+
+        # Pages list includes keyword-matched pages (1-based)
+        assert 16 in pages  # 0-based 15 -> 1-based 16
+        assert 26 in pages  # 0-based 25 -> 1-based 26
 
     def test_large_pdf_keyword_fallback_when_bookmarks_dont_match(self, tmp_path):
         """Bookmarks present but none match target patterns -> keyword fallback."""
@@ -742,11 +764,11 @@ class TestSmartPageSelection:
             pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, _pages = extract_text(pdf_path, max_pages=30)
 
         # Keywords found via scan
-        assert "Absolute maximum ratings" in result
-        assert "Electrical characteristics summary" in result
+        assert "Absolute maximum ratings" in text
+        assert "Electrical characteristics summary" in text
 
     def test_first_three_pages_always_included(self, tmp_path):
         """First 3 pages are always included regardless of method."""
@@ -765,11 +787,11 @@ class TestSmartPageSelection:
             pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, _pages = extract_text(pdf_path, max_pages=30)
 
-        assert "UNIQUE_OVERVIEW_TEXT" in result
-        assert "UNIQUE_FEATURES_TEXT" in result
-        assert "UNIQUE_PINOUT_TEXT" in result
+        assert "UNIQUE_OVERVIEW_TEXT" in text
+        assert "UNIQUE_FEATURES_TEXT" in text
+        assert "UNIQUE_PINOUT_TEXT" in text
 
     def test_text_limit_cap(self, tmp_path):
         """Total extracted text is capped at _PDF_TEXT_LIMIT characters."""
@@ -785,9 +807,9 @@ class TestSmartPageSelection:
             pdf_path, num_pages=50, page_texts=page_texts
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, _pages = extract_text(pdf_path, max_pages=30)
 
-        assert len(result) <= _PDF_TEXT_LIMIT + 1000  # small margin for newlines
+        assert len(text) <= _PDF_TEXT_LIMIT + 1000  # small margin for newlines
 
     def test_deduplication_of_page_indices(self, tmp_path):
         """Pages in both always-include set and bookmark set are only extracted once."""
@@ -806,10 +828,10 @@ class TestSmartPageSelection:
             pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, _pages = extract_text(pdf_path, max_pages=30)
 
         # Page 1 text should appear exactly once, not duplicated
-        assert result.count("FIRST_PAGE_UNIQUE") == 1
+        assert text.count("FIRST_PAGE_UNIQUE") == 1
 
     def test_large_pdf_with_pin_description_bookmark(self, tmp_path):
         """Pin description/function bookmarks are matched."""
@@ -828,10 +850,10 @@ class TestSmartPageSelection:
             pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, _pages = extract_text(pdf_path, max_pages=30)
 
-        assert "Pin Description table: PA0 GPIO" in result
-        assert "Pin Description continued: PB0 SPI" in result
+        assert "Pin Description table: PA0 GPIO" in text
+        assert "Pin Description continued: PB0 SPI" in text
 
     def test_large_pdf_recommended_operating_bookmark(self, tmp_path):
         """Recommended operating conditions bookmark is matched."""
@@ -849,9 +871,9 @@ class TestSmartPageSelection:
             pdf_path, num_pages=50, bookmarks=bookmarks, page_texts=page_texts
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, _pages = extract_text(pdf_path, max_pages=30)
 
-        assert "Recommended operating conditions: VCC 3.0V" in result
+        assert "Recommended operating conditions: VCC 3.0V" in text
 
     def test_electrical_characteristics_pages_included_synthetic_stm32(self, tmp_path):
         """Synthetic STM32-style datasheet: electrical characteristics pages extracted."""
@@ -902,25 +924,25 @@ class TestSmartPageSelection:
             page_texts=page_texts,
         )
 
-        result = extract_text(pdf_path, max_pages=30)
+        text, _pages = extract_text(pdf_path, max_pages=30)
 
         # First 3 pages (overview/features)
-        assert "STM32F103xx" in result
-        assert "ARM 32-bit Cortex-M3" in result
-        assert "Block diagram" in result
+        assert "STM32F103xx" in text
+        assert "ARM 32-bit Cortex-M3" in text
+        assert "Block diagram" in text
 
         # Pin description section (pages 10-25, 0-based 9-24)
-        assert "Pin description" in result
+        assert "Pin description" in text
 
         # Absolute maximum ratings (pages 26-30, 0-based 25-29)
-        assert "Absolute maximum ratings" in result
+        assert "Absolute maximum ratings" in text
 
         # Electrical characteristics (pages 36-50, 0-based 35-49)
-        assert "DC characteristics" in result
-        assert "ADC characteristics" in result
+        assert "DC characteristics" in text
+        assert "ADC characteristics" in text
 
         # Recommended operating conditions (pages 51-59, 0-based 50-58)
-        assert "Recommended operating conditions" in result
+        assert "Recommended operating conditions" in text
 
         # Package info should NOT be included
-        assert "Package information and ordering codes" not in result
+        assert "Package information and ordering codes" not in text
