@@ -497,11 +497,9 @@ class RevloApp(App[None]):
     # -- escape handling --
 
     def action_escape_key(self) -> None:
-        """Handle Escape: exit chat mode or quit the app."""
+        """Handle Escape: exit chat mode only (no-op outside chat)."""
         if self._chat_mode:
             self._exit_chat_mode()
-        else:
-            self.exit()
 
     # -- filter actions --
 
@@ -810,10 +808,9 @@ class RevloApp(App[None]):
             self.notify("No datasheet available for this finding.")
 
     def action_quit(self) -> None:
-        """Override quit to save chat before exiting."""
-        if self._chat_mode and self._chat_panel is not None:
-            if self._chat_panel.messages:
-                self._save_conversation()
+        """Quit the app, but only when NOT in chat mode (let q type normally)."""
+        if self._chat_mode:
+            return
         self.exit()
 
 
