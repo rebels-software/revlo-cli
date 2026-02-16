@@ -15,6 +15,59 @@ TEAL = "#00D4AA"   # Electric Teal  -- progress / info
 RED = "#FF4757"    # Signal Red     -- errors
 AMBER = "#FFB347"  # Warm Amber     -- warnings
 
+# Gradient stops: teal -> sky blue -> indigo
+GRADIENT_COLORS = ["#00D4AA", "#38BDF8", "#818CF8"]
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert a hex color string like '#00D4AA' to an (R, G, B) tuple."""
+    h = hex_color.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def gradient_text(text: str, colors: list[str], bold: bool = False) -> Text:
+    """Create a Text object with per-character color gradient.
+
+    Args:
+        text: The string to render.
+        colors: List of hex color strings (e.g. ["#00D4AA", "#7C3AED"]).
+            Interpolates linearly between stops.
+        bold: Whether to apply bold styling.
+    """
+    if not text:
+        return Text()
+    if len(colors) < 2:
+        style = f"{'bold ' if bold else ''}{colors[0] if colors else TEAL}"
+        return Text(text, style=style)
+
+    stops = [_hex_to_rgb(c) for c in colors]
+    n = len(text)
+    result = Text()
+
+    for i, char in enumerate(text):
+        # Map character index to a position in [0, len(stops)-1]
+        if n == 1:
+            t = 0.0
+        else:
+            t = i / (n - 1) * (len(stops) - 1)
+
+        # Determine which two stops to interpolate between
+        seg = int(t)
+        if seg >= len(stops) - 1:
+            seg = len(stops) - 2
+        frac = t - seg
+
+        r1, g1, b1 = stops[seg]
+        r2, g2, b2 = stops[seg + 1]
+        rr = int(r1 + (r2 - r1) * frac)
+        gg = int(g1 + (g2 - g1) * frac)
+        bb = int(b1 + (b2 - b1) * frac)
+
+        style = f"{'bold ' if bold else ''}#{rr:02x}{gg:02x}{bb:02x}"
+        result.append(char, style=style)
+
+    return result
+
 
 # ---------------------------------------------------------------------------
 # Public helpers
