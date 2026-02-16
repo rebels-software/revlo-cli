@@ -397,12 +397,14 @@ class RevloApp(App[None]):
         Binding("s", "filter_suggestions", "Suggestions", show=False),
         Binding("f", "filter_all", "All", show=False),
         Binding("a", "ask", "Ask", show=False),
+        Binding("t", "toggle_thinking", "Thinking", show=False),
         Binding("m", "export_markdown", "Export MD", show=False),
         Binding("o", "open_datasheet", "Open PDF", show=False),
     ]
 
     active_filter: reactive[str] = reactive("all")
     _chat_mode: reactive[bool] = reactive(False)
+    _thinking_enabled: reactive[bool] = reactive(False)
 
     def __init__(
         self,
@@ -568,6 +570,16 @@ class RevloApp(App[None]):
             return
         self._enter_chat_mode()
 
+    def action_toggle_thinking(self) -> None:
+        """Toggle extended thinking on/off (only in chat mode)."""
+        if not self._chat_mode:
+            return
+        self._thinking_enabled = not self._thinking_enabled
+        state = "ON" if self._thinking_enabled else "OFF"
+        self.notify(f"Extended thinking {state}")
+        self._update_chat_header()
+        self._update_filter_bar_for_chat()
+
     def _get_highlighted_finding(self) -> Finding | None:
         """Return the currently highlighted finding, if any."""
         try:
@@ -578,6 +590,58 @@ class RevloApp(App[None]):
         except Exception:
             pass
         return None
+
+    def _update_chat_header(self) -> None:
+        """Update the chat panel header to reflect the thinking toggle state."""
+        if self._chat_panel is None:
+            return
+        try:
+            header = self._chat_panel.query_one("#chat-header", Static)
+        except Exception:
+            return
+        state_tag = (
+            f"[bold {WARM_AMBER}]Thinking: ON[/]"
+            if self._thinking_enabled
+            else f"[{MUTED_GRAY}]Thinking: OFF[/]"
+        )
+        header.update(
+            f"[bold {ELECTRIC_TEAL}]Ask Revlo[/]  {state_tag}"
+            f"  [{MUTED_GRAY}]Press Escape to return.[/]"
+        )
+
+    def _update_filter_bar_for_chat(self) -> None:
+        """Replace filter bar hints with chat-mode keybindings."""
+        try:
+            fbar = self.query_one("#filter-bar", FilterBar)
+        except Exception:
+            return
+        thinking_label = (
+            f"[{WARM_AMBER}]on[/]" if self._thinking_enabled
+            else f"[{MUTED_GRAY}]off[/]"
+        )
+        fbar.query_one("#filter-left", Label).update(
+            f"[bold {ELECTRIC_TEAL}]\u25c6[/] [{SOFT_WHITE}]Ask Mode[/]"
+        )
+        fbar.query_one("#filter-center", Label).update(
+            f"  [{MUTED_GRAY}]\u2502[/]"
+            f"  [{ELECTRIC_TEAL}]t[/][{MUTED_GRAY}]hinking {thinking_label}[/]"
+        )
+        fbar.query_one("#filter-right", Label).update(
+            f"[{MUTED_GRAY}]\\[[/][{SOFT_WHITE}]esc[/][{MUTED_GRAY}]] back  "
+            f"\\[[/][{SOFT_WHITE}]q[/][{MUTED_GRAY}]] quit[/]"
+        )
+
+    def _restore_filter_bar(self) -> None:
+        """Restore filter bar to normal findings-mode hints."""
+        try:
+            fbar = self.query_one("#filter-bar", FilterBar)
+        except Exception:
+            return
+        fbar.query_one("#filter-left", Label).update(
+            _build_filter_left(self.active_filter)
+        )
+        fbar.query_one("#filter-center", Label).update(_build_filter_center())
+        fbar.query_one("#filter-right", Label).update(_build_filter_right())
 
     def _enter_chat_mode(self) -> None:
         """Show the chat panel, hiding the detail panel."""
@@ -621,6 +685,10 @@ class RevloApp(App[None]):
             except Exception:
                 self.mount(chat)
 
+        # Update UI elements to reflect chat mode
+        self._update_chat_header()
+        self._update_filter_bar_for_chat()
+
     def _exit_chat_mode(self) -> None:
         """Return to findings detail view, saving the conversation."""
         self._chat_mode = False
@@ -643,6 +711,9 @@ class RevloApp(App[None]):
 
         # Clear conversation history for next session
         self._conversation = []
+
+        # Restore filter bar to normal mode
+        self._restore_filter_bar()
 
     def _save_conversation(self) -> None:
         """Save the current chat conversation to disk."""
@@ -699,7 +770,7 @@ class RevloApp(App[None]):
     def _do_stream(self) -> None:
         """Threaded worker: non-streaming with tool use loop, streams text to UI.
 
-        Extended thinking is enabled to give Claude a budget for deep
+        When extended thinking is enabled, Claude gets a budget for deep
         reasoning on complex EE questions.  Thinking blocks are silently
         skipped -- only text and tool_use blocks are surfaced in the UI.
         """
@@ -716,6 +787,16 @@ class RevloApp(App[None]):
         tools = SCHEMATIC_TOOLS if parsed is not None else []
         specs = self.report.datasheet_specs or {}
 
+        # Build thinking/temperature kwargs conditionally
+        thinking_kwargs: dict = {}
+        if self._thinking_enabled:
+            thinking_kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": 10000,
+            }
+        else:
+            thinking_kwargs["thinking"] = {"type": "disabled"}
+
         max_rounds = 10
         for _ in range(max_rounds):
             try:
@@ -725,10 +806,7 @@ class RevloApp(App[None]):
                     system=self._system_prompt,
                     messages=messages,
                     tools=tools if tools else anthropic.NOT_GIVEN,
-                    thinking={
-                        "type": "enabled",
-                        "budget_tokens": 10000,
-                    },
+                    **thinking_kwargs,
                 )
             except Exception as exc:
                 logger.warning("Chat API call failed: %s", exc, exc_info=True)
