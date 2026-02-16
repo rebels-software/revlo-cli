@@ -331,6 +331,7 @@ class ChatPanel(Vertical):
         self.messages: list[ChatMessage] = []
         self._streaming_bubble: MessageBubble | None = None
         self._initial_context: str = initial_context
+        self._pending_history: list[dict] | None = None
 
     def compose(self):
         yield Static(
@@ -346,6 +347,9 @@ class ChatPanel(Vertical):
     def on_mount(self) -> None:
         if self._initial_context:
             self.add_initial_context(self._initial_context)
+        if self._pending_history is not None:
+            self.load_history(self._pending_history)
+            self._pending_history = None
         self.query_one("#chat-input", Input).focus()
 
     def add_user_message(self, text: str) -> None:
@@ -416,8 +420,15 @@ class ChatPanel(Vertical):
 
         Each message dict should have keys: role, content, and optionally timestamp.
         Populates both the visual scroll area and the internal messages list.
+
+        If the widget has not been composed yet (no ``#chat-scroll``), the
+        messages are stored and replayed automatically in ``on_mount``.
         """
-        scroll = self.query_one("#chat-scroll", VerticalScroll)
+        try:
+            scroll = self.query_one("#chat-scroll", VerticalScroll)
+        except Exception:
+            self._pending_history = list(messages)
+            return
         for m in messages:
             role = m.get("role", "user")
             content = m.get("content", "")
