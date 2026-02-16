@@ -20,10 +20,8 @@ from revlo.parser.models import (
     PinConnection,
     TitleBlockInfo,
 )
+from revlo.config import DEFAULT_MODEL, MODEL_OPUS, MODEL_SONNET
 from revlo.reviewer.engine import (
-    DEFAULT_MODEL,
-    MODEL_OPUS,
-    MODEL_SONNET,
     _build_summary,
     _review_chunk_generic,
     review_schematic,

@@ -11,16 +11,13 @@ from typing import Any
 
 from revlo.datasheet.models import DatasheetSpec
 from revlo.parser.models import ParsedSchematic
+from revlo.config import DEFAULT_MODEL
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.reviewer.models import Finding, ReviewReport
 from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
 from revlo.skills import load_skill
 
 logger = logging.getLogger(__name__)
-
-MODEL_SONNET = "claude-sonnet-4-5-20250929"
-MODEL_OPUS = "claude-opus-4-6"
-DEFAULT_MODEL = MODEL_OPUS
 
 
 # ---------------------------------------------------------------------------

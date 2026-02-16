@@ -7,11 +7,12 @@ from typing import Any
 
 import anthropic
 
+from revlo.config import MODEL_HAIKU
 from revlo.datasheet.models import DatasheetSpec
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-haiku-4-5-20251001"
+_MODEL = MODEL_HAIKU
 _MAX_TOKENS = 4096
 _PDF_TEXT_LIMIT = 100_000
 
