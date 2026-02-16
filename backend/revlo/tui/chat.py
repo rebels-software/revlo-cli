@@ -73,6 +73,10 @@ def markup_response(text: str) -> str:
         return m.group(0)
 
     safe = _COMP_REF_RE.sub(_ref_repl, safe)
+
+    # Convert markdown bold (**text**) to Rich bold markup.
+    safe = re.sub(r"\*\*(.+?)\*\*", r"[bold]\1[/bold]", safe)
+
     return safe
 
 
