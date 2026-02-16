@@ -1,5 +1,5 @@
 [project]
-name = "revlo"
+name = "revlo-cli"
 version = "0.1.0"
 description = "AI-powered design review for KiCad schematics"
 readme = "README.md"
