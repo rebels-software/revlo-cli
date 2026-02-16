@@ -6,9 +6,11 @@ Loads a .kicad_sch file and returns a fully populated ParsedSchematic model.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import kicad_sch_api as ksa
+from kicad_sch_api.core.connectivity import Net
 
 from revlo.parser.connectivity import build_merged_net_list
 from revlo.parser.models import (
@@ -20,6 +22,25 @@ from revlo.parser.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _patch_net_hash() -> None:
+    """Monkey-patch ``Net.__hash__`` to fix ``unhashable type: 'Net'``.
+
+    kicad-sch-api's ``Net`` dataclass uses ``eq=True`` (the default) with
+    mutable ``Set`` fields, causing Python to set ``__hash__ = None``.  The
+    connectivity analyser then crashes when it tries to add a ``Net`` to a
+    ``set``.  An identity-based hash is correct here because net merging in
+    kicad-sch-api uses object identity.
+    """
+    if not getattr(Net, "_hash_patched", False):
+        Net.__hash__ = lambda self: id(self)  # type: ignore[assignment]
+        Net._hash_patched = True  # type: ignore[attr-defined]
+
+
+# Apply the patch at import time so any code path that touches connectivity
+# (including ``build_net_list`` and ``get_net_for_pin``) is safe.
+_patch_net_hash()
 
 
 def _detect_unsupported_format(sch_path: Path) -> None:
@@ -310,39 +331,165 @@ def _extract_components(
     return components, power_symbols
 
 
+def _get_net_name(
+    sch: ksa.Schematic,
+    ref: str,
+    pin_num: str,
+) -> str | None:
+    """Safely resolve the net name for a component pin.
+
+    Wraps ``sch.get_net_for_pin`` with error handling so that a single
+    failing pin does not abort the entire parse.
+    """
+    try:
+        net = sch.get_net_for_pin(ref, pin_num)
+        return net.name if net else None
+    except Exception:
+        logger.debug("Could not resolve net for %s pin %s", ref, pin_num)
+        return None
+
+
+# Regex for extracting pin definitions from a raw lib_symbols S-expression
+# block.  Matches: (pin TYPE SHAPE ... (name "NAME" ...) (number "NUM" ...))
+_SEXP_PIN_RE = re.compile(
+    r"\(pin\s+(\w+)\s+\w+\s+.*?"
+    r"\(name\s+\"([^\"]*)\"\s*.*?\)\s*"
+    r"\(number\s+\"([^\"]*)\"\s*.*?\)\s*\)",
+    re.DOTALL,
+)
+
+
+def _get_lib_symbol_pins(
+    sch: ksa.Schematic,
+    lib_id: str,
+) -> dict[str, dict[str, str]]:
+    """Look up pin metadata from the library symbol matching *lib_id*.
+
+    Returns a mapping ``{pin_number: {"name": ..., "type": ...}}``.
+
+    Two resolution strategies are tried in order:
+
+    1. **Library cache** -- ``sch.library.get_symbol(lib_id)`` works for
+       standard KiCad libraries (``Device:``, ``power:``, etc.).
+    2. **Raw S-expression fallback** -- for custom / project-specific
+       libraries whose ``.kicad_sym`` files are not installed, the symbol
+       definition still exists inside the schematic's embedded
+       ``(lib_symbols ...)`` section.  We parse it with a lightweight
+       regex.
+    """
+    pins: dict[str, dict[str, str]] = {}
+
+    # --- Strategy 1: library cache -------------------------------------------
+    try:
+        sym = sch.library.get_symbol(lib_id)
+    except Exception:
+        sym = None
+
+    if sym and sym.pins:
+        for p in sym.pins:
+            pin_type = (
+                p.pin_type.value
+                if hasattr(p.pin_type, "value")
+                else str(p.pin_type)
+            )
+            pins[p.number] = {"name": p.name, "type": pin_type}
+        return pins
+
+    # --- Strategy 2: raw S-expression in embedded lib_symbols ----------------
+    raw_content: str = sch._data.get("_original_content", "")
+    if not raw_content:
+        return pins
+
+    # Locate the ``(symbol "<lib_id>" ...)`` block inside ``(lib_symbols ...)``.
+    marker = f'(symbol "{lib_id}"'
+    start = raw_content.find(marker)
+    if start == -1:
+        return pins
+
+    # Walk forward counting parentheses to find the matching close-paren.
+    depth = 0
+    end = start
+    for i in range(start, len(raw_content)):
+        ch = raw_content[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    symbol_block = raw_content[start:end]
+
+    for match in _SEXP_PIN_RE.finditer(symbol_block):
+        pin_type_raw, pin_name, pin_number = match.groups()
+        pins[pin_number] = {"name": pin_name, "type": pin_type_raw}
+
+    return pins
+
+
 def _extract_pins(sch: ksa.Schematic, comp: ksa.Component) -> list[ParsedPin]:
-    """Extract pin data for a single component, including net connectivity."""
+    """Extract pin data for a single component, including net connectivity.
+
+    Supports two code paths:
+
+    * **KiCad 6/7/8** -- ``comp.pins`` is populated directly by
+      kicad-sch-api.
+    * **KiCad 9** -- ``comp.pins`` is empty, but ``comp._data.pin_uuids``
+      contains a ``{pin_number: uuid}`` dict.  Pin metadata (name,
+      electrical type) is resolved from library symbols or the embedded
+      ``(lib_symbols ...)`` section.
+    """
     parsed_pins: list[ParsedPin] = []
 
-    for pin in comp.pins:
-        # Get absolute pin position
-        pin_pos = comp.get_pin_position(pin.number)
-        position = (pin_pos.x, pin_pos.y) if pin_pos else (0.0, 0.0)
+    if comp.pins:
+        # Original path for KiCad 6/7/8.
+        for pin in comp.pins:
+            pin_pos = comp.get_pin_position(pin.number)
+            position = (pin_pos.x, pin_pos.y) if pin_pos else (0.0, 0.0)
+            connected_net = _get_net_name(sch, comp.reference, pin.number)
 
-        # Determine connected net
-        connected_net: str | None = None
-        try:
-            net = sch.get_net_for_pin(comp.reference, pin.number)
-            if net is not None:
-                connected_net = net.name
-        except Exception:
-            logger.debug(
-                "Could not resolve net for %s pin %s",
-                comp.reference,
-                pin.number,
+            parsed_pins.append(
+                ParsedPin(
+                    number=pin.number,
+                    name=pin.name,
+                    position=position,
+                    electrical_type=(
+                        pin.pin_type.value
+                        if hasattr(pin.pin_type, "value")
+                        else str(pin.pin_type)
+                    ),
+                    connected_net=connected_net,
+                )
             )
+    elif hasattr(comp._data, "pin_uuids") and comp._data.pin_uuids:
+        # Fallback for KiCad 9 where comp.pins is empty.
+        lib_pins = _get_lib_symbol_pins(sch, comp.lib_id)
 
-        parsed_pins.append(
-            ParsedPin(
-                number=pin.number,
-                name=pin.name,
-                position=position,
-                electrical_type=pin.pin_type.value
-                if hasattr(pin.pin_type, "value")
-                else str(pin.pin_type),
-                connected_net=connected_net,
+        for pin_num in comp._data.pin_uuids:
+            lib_pin = lib_pins.get(pin_num, {})
+            pin_name = lib_pin.get("name", pin_num)
+            electrical_type = lib_pin.get("type", "passive")
+
+            try:
+                pin_pos = comp.get_pin_position(pin_num)
+                position = (
+                    (pin_pos.x, pin_pos.y) if pin_pos else (0.0, 0.0)
+                )
+            except Exception:
+                position = (0.0, 0.0)
+
+            connected_net = _get_net_name(sch, comp.reference, pin_num)
+
+            parsed_pins.append(
+                ParsedPin(
+                    number=pin_num,
+                    name=pin_name,
+                    position=position,
+                    electrical_type=electrical_type,
+                    connected_net=connected_net,
+                )
             )
-        )
 
     return parsed_pins
 
