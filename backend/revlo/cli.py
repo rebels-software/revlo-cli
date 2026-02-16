@@ -216,9 +216,9 @@ def _run_review(args: argparse.Namespace) -> None:
                 }
 
                 with Progress(
-                    TextColumn(f"[{TEAL}]\u25A0 Fetching datasheets..."),
+                    TextColumn(f"[{AMBER}]\u25A0 Fetching datasheets..."),
                     BenDayDotsColumn(bar_width=30),
-                    TextColumn(f"[{TEAL}]{{task.completed}}/{{task.total}}"),
+                    TextColumn(f"[{AMBER}]{{task.completed}}/{{task.total}}"),
                     console=console,
                     transient=True,
                 ) as progress:
@@ -240,11 +240,11 @@ def _run_review(args: argparse.Namespace) -> None:
                             )
                         elif source == "manual":
                             progress.console.print(
-                                f"  [{TEAL}]{ref}: {mpn} (manual PDF)[/]"
+                                f"  [{AMBER}]{ref}: {mpn} (manual PDF)[/]"
                             )
                         elif source == "fetched":
                             progress.console.print(
-                                f"  [{TEAL}]{ref}: {mpn} (fetched)[/]"
+                                f"  [{AMBER}]{ref}: {mpn} (fetched)[/]"
                             )
                         elif source == "failed":
                             progress.console.print(
@@ -273,7 +273,7 @@ def _run_review(args: argparse.Namespace) -> None:
                     parts.append("0 failed")
                 summary_text = ", ".join(parts)
                 console.print(
-                    f"[{TEAL}]\u25A0 Datasheets: {summary_text}[/]"
+                    f"[{AMBER}]\u25A0 Datasheets: {summary_text}[/]"
                 )
             else:
                 datasheet_specs = asyncio.run(
