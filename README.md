@@ -29,10 +29,10 @@ Revlo is a command-line tool that catches electrical engineering mistakes in KiC
 - **KiCad 7/8/9 Parser** -- Extracts components, nets, connectivity, power symbols, and properties from `.kicad_sch` files
 - **Hierarchical Sub-sheet Support** -- Recursively parses sub-sheets and resolves cross-sheet nets with instance-aware references
 - **Datasheet Intelligence** -- Automatically fetches component datasheets, extracts specs with AI, and caches results locally
-- **6-Domain EE Review** -- Claude reviews your design across decoupling, pull-ups, unused pins, reset circuits, clock/oscillator, signal integrity, power rails, grounding, ESD, and thermal concerns
+- **Comprehensive EE Review** -- Revlo reviews your design across decoupling, pull-ups, unused pins, reset circuits, clock/oscillator, signal integrity, power rails, grounding, ESD, and thermal concerns
 - **Confidence-Scored Findings** -- Every finding includes a 0.0-1.0 confidence score so you can prioritize what matters
 - **Interactive TUI Browser** -- Browse and filter findings in a full-screen terminal UI with severity highlighting
-- **Ask Mode** -- Interactive chat with Claude Opus that has live access to your schematic via built-in tools
+- **Ask Mode** -- Interactive chat with live access to your schematic via built-in tools
 - **Branded CLI Output** -- Progress bars, colour-coded severity cards, and a summary line at a glance
 - **Review History** -- Every review and conversation is saved automatically; re-open past reviews without re-running
 - **JSON & Markdown Export** -- Pipe structured output into your CI/CD pipeline or generate human-readable reports
@@ -114,11 +114,11 @@ Found 3 errors, 5 warnings, 4 suggestions
 
 ## Ask Mode
 
-Press `a` in the TUI to enter Ask Mode -- an interactive chat with Claude Opus that has live access to your schematic. Ask complex EE questions and get answers grounded in your actual design.
+Press `a` in the TUI to enter Ask Mode -- an interactive chat with live access to your schematic. Ask complex EE questions and get answers grounded in your actual design.
 
 ### Schematic Tools
 
-Opus can actively explore your design using 4 built-in tools:
+Revlo can actively explore your design using 4 built-in tools:
 
 | Tool | What it does |
 |------|-------------|
@@ -193,7 +193,7 @@ revlo history board.kicad_sch --load 2
         │
         ▼
  ┌─────────────┐
- │  EE Review  │  Claude reviews each chunk against
+ │  EE Review  │  AI reviews each chunk against
  │  Engine     │  domain-specific checklists + datasheet specs
  └──────┬──────┘
         │
@@ -270,7 +270,7 @@ revlo review board.kicad_sch --skip-datasheet
 # Filter low-confidence findings
 revlo review board.kicad_sch --min-confidence 0.7
 
-# Use Opus model for deeper review
+# Use a larger model for deeper review
 revlo review board.kicad_sch --model opus
 
 # Verbose output (show debug info)
@@ -311,6 +311,10 @@ cd backend && uv run ruff check revlo/
 ```bash
 cd backend && uv run python -c "from revlo.parser import parse_schematic; print('OK')"
 ```
+
+## Built With
+
+Built with **Opus 4.6** during a [Claude Code hackathon](https://claude.ai/claude-code). Revlo is an early-stage project -- more features, deeper analysis, and broader KiCad support are on the way.
 
 ## License
 
