@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from revlo import __version__
 from revlo.reviewer.models import ReviewReport
 
 
@@ -39,7 +40,7 @@ def save_review(report: ReviewReport, schematic_path: str) -> Path:
     data["_meta"] = {
         "schematic": sch.name,
         "saved_at": datetime.now(timezone.utc).isoformat(),
-        "revlo_version": "0.1.0",
+        "revlo_version": __version__,
     }
 
     out_path.write_text(json.dumps(data, indent=2))
@@ -73,7 +74,7 @@ def save_chat(
             "schematic": sch.name,
             "review_file": str(review_path) if review_path else None,
             "saved_at": datetime.now(timezone.utc).isoformat(),
-            "revlo_version": "0.1.0",
+            "revlo_version": __version__,
             "type": "chat",
         },
     }

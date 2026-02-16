@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.progress import Progress, TextColumn
 from rich.status import Status
 
+from revlo import __version__
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
 from revlo.reviewer import MODEL_OPUS, MODEL_SONNET, review_schematic
@@ -37,6 +38,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="revlo",
         description="AI-powered design review for KiCad schematics",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"revlo {__version__}",
     )
     parser.add_argument(
         "-v", "--verbose",

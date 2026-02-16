@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.progress import ProgressColumn, Task as RichTask
 from rich.text import Text
 
+from revlo import __version__
 from revlo.reviewer.models import ReviewReport, Severity
 
 # ---------------------------------------------------------------------------
@@ -136,14 +137,13 @@ class AnimatedGradient:
 # ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
-VERSION = "v0.1"
 LOGO = (
     "██████╗ ███████╗██╗   ██╗██╗      ██████╗ \n"
     "██╔══██╗██╔════╝██║   ██║██║     ██╔═══██╗\n"
     "██████╔╝█████╗  ██║   ██║██║     ██║   ██║\n"
     "██╔══██╗██╔══╝  ╚██╗ ██╔╝██║     ██║   ██║\n"
     "██║  ██║███████╗ ╚████╔╝ ███████╗╚██████╔╝\n"
-    f"╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝ {VERSION}"
+    f"╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝ v{__version__}"
 )
 
 

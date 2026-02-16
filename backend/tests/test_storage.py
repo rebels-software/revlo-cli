@@ -90,7 +90,8 @@ def test_save_review_contains_valid_report_and_meta(
     meta = data["_meta"]
     assert meta["schematic"] == "board.kicad_sch"
     assert "saved_at" in meta
-    assert meta["revlo_version"] == "0.1.0"
+    from revlo import __version__
+    assert meta["revlo_version"] == __version__
 
     # Report data is round-trippable
     meta_copy = data.pop("_meta")  # noqa: F841
