@@ -15,9 +15,8 @@
 
 </div>
 
----
-
-![Revlo Demo](docs/demo.gif)
+<!-- --- -->
+<!-- ![Revlo Demo](docs/demo.gif) -->
 
 ## What is Revlo?
 
@@ -25,7 +24,7 @@ Revlo is a command-line tool that catches electrical engineering mistakes in KiC
 
 ## Features
 
-- **KiCad 7/8 Parser** -- Extracts components, nets, connectivity, power symbols, and properties from `.kicad_sch` files
+- **KiCad 7/8/9 Parser** -- Extracts components, nets, connectivity, power symbols, and properties from `.kicad_sch` files
 - **Hierarchical Sub-sheet Support** -- Recursively parses sub-sheets and resolves cross-sheet nets with instance-aware references
 - **Datasheet Intelligence** -- Automatically fetches component datasheets, extracts specs with AI, and caches results locally
 - **6-Domain EE Review** -- Claude reviews your design across decoupling, pull-ups, unused pins, reset circuits, clock/oscillator, signal integrity, power rails, grounding, ESD, and thermal concerns
@@ -116,32 +115,72 @@ Found 3 errors, 5 warnings, 4 suggestions
        │
        ▼
  ┌─────────────┐
- │   Parser     │  Extract components, nets, connectivity,
- │              │  hierarchical sub-sheets, power symbols
+ │   Parser    │  Extract components, nets, connectivity,
+ │             │  hierarchical sub-sheets, power symbols
  └──────┬──────┘
         │
         ▼
  ┌─────────────┐
- │  Datasheet   │  Resolve MPN → fetch PDF → extract specs
- │  Pipeline    │  (normalize, cache, smart page selection)
+ │  Datasheet  │  Resolve MPN → fetch PDF → extract specs
+ │  Pipeline   │  (normalize, cache, smart page selection)
  └──────┬──────┘
         │
         ▼
  ┌─────────────┐
- │  Chunker     │  Split into IC-context + power-rail chunks
+ │  Chunker    │  Split into IC-context + power-rail chunks
  └──────┬──────┘
         │
         ▼
  ┌─────────────┐
- │  EE Review   │  Claude reviews each chunk against
- │  Engine      │  domain-specific checklists + datasheet specs
+ │  EE Revie   │  Claude reviews each chunk against
+ │  Engine     │  domain-specific checklists + datasheet specs
  └──────┬──────┘
         │
         ▼
  ┌─────────────┐
- │  Output      │  TUI browser, CLI cards, JSON, Markdown
+ │  Output     │  TUI browser, CLI cards, JSON, Markdown
  └─────────────┘
 ```
+
+## Datasheet Intelligence
+
+Revlo automatically fetches and analyzes component datasheets to make reviews more accurate. It resolves datasheet PDFs in this order:
+
+1. **Schematic-embedded URL** -- If your KiCad component has a `Datasheet` property, Revlo validates it with a HEAD request and downloads it directly.
+2. **Mouser API** -- Searches by manufacturer part number using the [Mouser Search API](https://www.mouser.com/api-hub/).
+3. **Farnell/Element14 API** -- Falls back to the [Farnell Product Search API](https://partner.element14.com/docs/Product_Search_API_REST_Description).
+4. **Manual PDF** -- If all automated sources fail, you can drop a PDF into the `datasheets/` directory next to your schematic.
+
+### API Keys (Optional)
+
+Mouser and Farnell lookups require free API keys. Without them, Revlo still works using schematic-embedded URLs and manual PDFs.
+
+```bash
+# Get a free key at https://www.mouser.com/api-hub/
+export MOUSER_API_KEY="your-mouser-api-key"
+
+# Get a free key at https://partner.element14.com/
+export FARNELL_API_KEY="your-farnell-api-key"
+```
+
+You can also add these to a `.env` file in the project root -- Revlo loads it automatically via `python-dotenv`.
+
+### Manual PDF Fallback
+
+If a datasheet can't be fetched (e.g. vendor blocks programmatic downloads), place the PDF in the `datasheets/` directory next to your schematic. Revlo matches PDFs by manufacturer part number:
+
+```
+my-project/
+  board.kicad_sch
+  datasheets/
+    MSPM0G3507SPTR.pdf      # matched by MPN substring
+    www.ti.com/              # or in vendor subdirectory
+      mspm0g3507.pdf
+```
+
+### Caching
+
+Downloaded datasheets and extracted specs are cached in `datasheets/cache.json` with a 90-day TTL. Delete the cache file to force re-fetching.
 
 ## CLI Reference
 
