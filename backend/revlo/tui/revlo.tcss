@@ -155,6 +155,17 @@ SeverityGroupHeader:disabled {
     color: #E8ECF1;
 }
 
+#detail-suggested-fix {
+    display: none;
+    width: 1fr;
+    border: solid #00D4AA;
+    border-title-color: #00D4AA;
+    border-title-style: bold;
+    padding: 1 2;
+    margin: 0 0 1 0;
+    color: #E8ECF1;
+}
+
 /* -- Chat panel ----------------------------------------------------------- */
 
 #chat-panel {

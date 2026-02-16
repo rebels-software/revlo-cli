@@ -256,10 +256,12 @@ class DetailPanel(Vertical):
         yield Static("", id="detail-content")
         yield Static("", id="detail-description")
         yield Static("", id="detail-recommendation")
+        yield Static("", id="detail-suggested-fix")
 
     def on_mount(self) -> None:
         self.query_one("#detail-description", Static).border_title = "Description"
         self.query_one("#detail-recommendation", Static).border_title = "Recommendation"
+        self.query_one("#detail-suggested-fix", Static).border_title = "Suggested Fix"
 
     @staticmethod
     def _format_pages(pages: list[int]) -> str:
@@ -329,6 +331,14 @@ class DetailPanel(Vertical):
         rec.styles.display = "block"
         rec.update(finding.recommendation)
 
+        fix = self.query_one("#detail-suggested-fix", Static)
+        if finding.suggested_fix:
+            fix.styles.display = "block"
+            fix.update(finding.suggested_fix)
+        else:
+            fix.styles.display = "none"
+            fix.update("")
+
     def show_empty(self) -> None:
         self.query_one("#detail-placeholder", Static).styles.display = "block"
         self.query_one("#detail-placeholder", Static).update(
@@ -337,6 +347,7 @@ class DetailPanel(Vertical):
         self.query_one("#detail-content", Static).styles.display = "none"
         self.query_one("#detail-description", Static).styles.display = "none"
         self.query_one("#detail-recommendation", Static).styles.display = "none"
+        self.query_one("#detail-suggested-fix", Static).styles.display = "none"
 
 
 class FilterBar(Horizontal):
@@ -686,7 +697,12 @@ class RevloApp(App[None]):
         )
 
     def _do_stream(self) -> None:
-        """Threaded worker: non-streaming with tool use loop, streams text to UI."""
+        """Threaded worker: non-streaming with tool use loop, streams text to UI.
+
+        Extended thinking is enabled to give Claude a budget for deep
+        reasoning on complex EE questions.  Thinking blocks are silently
+        skipped -- only text and tool_use blocks are surfaced in the UI.
+        """
         import anthropic
 
         from revlo.tui.tools import SCHEMATIC_TOOLS, execute_tool
@@ -705,21 +721,27 @@ class RevloApp(App[None]):
             try:
                 response = client.messages.create(
                     model=DEFAULT_MODEL,
-                    max_tokens=4096,
+                    max_tokens=16000,
                     system=self._system_prompt,
                     messages=messages,
                     tools=tools if tools else anthropic.NOT_GIVEN,
+                    thinking={
+                        "type": "enabled",
+                        "budget_tokens": 10000,
+                    },
                 )
             except Exception as exc:
                 logger.warning("Chat API call failed: %s", exc, exc_info=True)
                 full_text = full_text or f"Error: could not reach Claude. ({exc})"
                 break
 
-            # Separate text and tool_use blocks
+            # Separate text and tool_use blocks; skip thinking blocks
             text_parts: list[str] = []
             tool_uses: list = []
             for block in response.content:
-                if block.type == "text":
+                if block.type == "thinking":
+                    continue  # extended thinking -- don't show in UI
+                elif block.type == "text":
                     text_parts.append(block.text)
                 elif block.type == "tool_use":
                     tool_uses.append(block)
@@ -821,9 +843,14 @@ class RevloApp(App[None]):
 
 def _block_to_dict(block) -> dict:
     """Convert an API content block to a dict for message history."""
+    if block.type == "thinking":
+        return {
+            "type": "thinking",
+            "thinking": getattr(block, "thinking", ""),
+        }
     if block.type == "text":
         return {"type": "text", "text": block.text}
-    elif block.type == "tool_use":
+    if block.type == "tool_use":
         return {
             "type": "tool_use",
             "id": block.id,
