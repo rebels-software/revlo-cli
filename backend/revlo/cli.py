@@ -365,7 +365,7 @@ def _run_review(args: argparse.Namespace) -> None:
 
     from revlo.tui import RevloApp
 
-    app = RevloApp(report, path)
+    app = RevloApp(report, path, review_path=saved_path)
     app.run()
 
 
@@ -483,7 +483,7 @@ def _run_history(args: argparse.Namespace) -> None:
 
         from revlo.tui import RevloApp
 
-        app = RevloApp(data, path)
+        app = RevloApp(data, path, review_path=entry.path)
         app.run()
     else:
         # Chat entries fall back to --no-tui display
@@ -515,7 +515,7 @@ def _run_open(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    report, meta = result
+    report, meta, review_file = result
     console = Console(stderr=True)
 
     saved_at = meta.get("saved_at", "unknown")
@@ -533,7 +533,7 @@ def _run_open(args: argparse.Namespace) -> None:
 
     from revlo.tui import RevloApp
 
-    app = RevloApp(report, path)
+    app = RevloApp(report, path, review_path=review_file)
     app.run()
 
 

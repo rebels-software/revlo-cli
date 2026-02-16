@@ -396,11 +396,13 @@ class RevloApp(App[None]):
         self,
         report: ReviewReport,
         schematic_path: str,
+        review_path: Path | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.report = report
         self.schematic_path = schematic_path
+        self._review_path = review_path  # Path to the .revlo review JSON
         self._sorted_findings = self._sort_findings(report.findings)
         self._chat_panel = None
         self._conversation: list[dict] = []  # API-format messages
@@ -627,7 +629,11 @@ class RevloApp(App[None]):
             return
         try:
             from revlo.storage import save_chat
-            path = save_chat(messages, self.schematic_path)
+            path = save_chat(
+                messages,
+                self.schematic_path,
+                review_path=self._review_path,
+            )
             self.notify(f"Chat saved to {path.name}")
         except Exception:
             logger.warning("Failed to save chat conversation", exc_info=True)
@@ -658,39 +664,49 @@ class RevloApp(App[None]):
         )
 
     def _stream_response(self) -> None:
-        """Start the async streaming worker."""
+        """Start the threaded streaming worker."""
         self.run_worker(
-            self._do_stream(),
+            self._do_stream,  # pass the method, not a coroutine
+            thread=True,      # run in a separate thread
             name="chat_stream",
             exclusive=True,
         )
 
-    async def _do_stream(self) -> None:
-        """Async worker that streams the Claude response."""
+    def _do_stream(self) -> None:
+        """Threaded worker that streams the Claude response using sync client."""
         import anthropic
 
-        client = anthropic.AsyncAnthropic()
+        client = anthropic.Anthropic()  # sync client
         full_text = ""
 
         try:
-            async with client.messages.stream(
+            with client.messages.stream(
                 model="claude-opus-4-6",
                 max_tokens=4096,
                 system=self._system_prompt,
                 messages=list(self._conversation),
             ) as stream:
-                async for text in stream.text_stream:
+                for text in stream.text_stream:
                     full_text += text
                     if self._chat_panel is not None:
-                        self._chat_panel.update_assistant_stream(full_text)
+                        self.call_from_thread(
+                            self._chat_panel.update_assistant_stream,
+                            full_text,
+                        )
         except Exception as exc:
             logger.warning("Chat stream failed: %s", exc, exc_info=True)
             full_text = full_text or f"Error: could not reach Claude. ({exc})"
 
         # Finalize the message
         if self._chat_panel is not None:
-            self._chat_panel.finish_assistant_message(full_text)
-            self._chat_panel.set_input_enabled(True)
+            self.call_from_thread(
+                self._chat_panel.finish_assistant_message,
+                full_text,
+            )
+            self.call_from_thread(
+                self._chat_panel.set_input_enabled,
+                True,
+            )
 
         # Add to conversation history
         self._conversation.append({"role": "assistant", "content": full_text})

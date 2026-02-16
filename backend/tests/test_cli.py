@@ -914,6 +914,7 @@ def test_run_open_no_tui(
     mock_load.return_value = (
         mock_review_report,
         {"schematic": "test.kicad_sch", "saved_at": "2026-02-12T00:00:00+00:00"},
+        Path(fixture_path).parent / ".revlo" / "test-review-20260212T000000.json",
     )
 
     args = _build_parser().parse_args(["open", fixture_path, "--no-tui"])
@@ -939,6 +940,7 @@ def test_run_open_json(
     mock_load.return_value = (
         mock_review_report,
         {"schematic": "test.kicad_sch", "saved_at": "2026-02-12T00:00:00+00:00"},
+        Path(fixture_path).parent / ".revlo" / "test-review-20260212T000000.json",
     )
 
     args = _build_parser().parse_args(["open", fixture_path, "--json"])

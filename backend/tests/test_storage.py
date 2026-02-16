@@ -147,11 +147,13 @@ def test_load_latest_review_round_trip(
     result = load_latest_review(str(fake_schematic))
     assert result is not None
 
-    report, meta = result
+    report, meta, review_file = result
     assert report.schematic_title == "Test Schematic"
     assert len(report.findings) == 1
     assert report.findings[0].component_ref == "U1"
     assert meta["schematic"] == "board.kicad_sch"
+    assert review_file.exists()
+    assert review_file.name.startswith("board-review-")
 
 
 def test_load_latest_review_picks_newest(
@@ -188,8 +190,9 @@ def test_load_latest_review_picks_newest(
 
     result = load_latest_review(str(fake_schematic))
     assert result is not None
-    report, meta = result
+    report, meta, review_file = result
     assert report.summary == "newer review"
+    assert "20260212T120000" in review_file.name
 
 
 # ---------------------------------------------------------------------------

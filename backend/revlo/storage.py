@@ -49,6 +49,7 @@ def save_review(report: ReviewReport, schematic_path: str) -> Path:
 def save_chat(
     messages: list[dict],
     schematic_path: str,
+    review_path: Path | None = None,
 ) -> Path:
     """Save chat conversation as JSON in .revlo/ next to the schematic.
 
@@ -56,6 +57,7 @@ def save_chat(
     Returns the path to the saved file.
 
     ``messages`` should be a list of dicts with keys: role, content, timestamp.
+    ``review_path`` optionally links the chat to the review it was opened from.
     """
     sch = Path(schematic_path)
     revlo_dir = sch.parent / ".revlo"
@@ -69,6 +71,7 @@ def save_chat(
         "messages": messages,
         "_meta": {
             "schematic": sch.name,
+            "review_file": str(review_path) if review_path else None,
             "saved_at": datetime.now(timezone.utc).isoformat(),
             "revlo_version": "0.1.0",
             "type": "chat",
@@ -79,10 +82,10 @@ def save_chat(
     return out_path
 
 
-def load_latest_review(schematic_path: str) -> tuple[ReviewReport, dict] | None:
+def load_latest_review(schematic_path: str) -> tuple[ReviewReport, dict, Path] | None:
     """Load the most recent review for a schematic.
 
-    Returns (report, metadata) or None if no reviews exist.
+    Returns (report, metadata, review_file_path) or None if no reviews exist.
     """
     sch = Path(schematic_path)
     revlo_dir = sch.parent / ".revlo"
@@ -102,7 +105,7 @@ def load_latest_review(schematic_path: str) -> tuple[ReviewReport, dict] | None:
 
     meta = data.pop("_meta", {})
     report = ReviewReport.model_validate(data)
-    return report, meta
+    return report, meta, latest
 
 
 def _build_review_summary(data: dict) -> str:
