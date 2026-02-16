@@ -674,7 +674,7 @@ class RevloApp(App[None]):
 
         try:
             async with client.messages.stream(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-opus-4-6",
                 max_tokens=4096,
                 system=self._system_prompt,
                 messages=list(self._conversation),
@@ -682,24 +682,15 @@ class RevloApp(App[None]):
                 async for text in stream.text_stream:
                     full_text += text
                     if self._chat_panel is not None:
-                        self.call_from_thread(
-                            self._chat_panel.update_assistant_stream,
-                            full_text,
-                        )
+                        self._chat_panel.update_assistant_stream(full_text)
         except Exception as exc:
             logger.warning("Chat stream failed: %s", exc, exc_info=True)
             full_text = full_text or f"Error: could not reach Claude. ({exc})"
 
         # Finalize the message
         if self._chat_panel is not None:
-            self.call_from_thread(
-                self._chat_panel.finish_assistant_message,
-                full_text,
-            )
-            self.call_from_thread(
-                self._chat_panel.set_input_enabled,
-                True,
-            )
+            self._chat_panel.finish_assistant_message(full_text)
+            self._chat_panel.set_input_enabled(True)
 
         # Add to conversation history
         self._conversation.append({"role": "assistant", "content": full_text})
