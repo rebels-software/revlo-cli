@@ -109,6 +109,29 @@ def load_latest_review(schematic_path: str) -> tuple[ReviewReport, dict, Path] |
     return report, meta, latest
 
 
+def load_latest_chat(schematic_path: str) -> list[dict] | None:
+    """Load the most recent chat conversation for a schematic.
+
+    Returns a list of message dicts (each with role, content, timestamp)
+    or None if no chat history exists.
+    """
+    sch = Path(schematic_path)
+    revlo_dir = sch.parent / ".revlo"
+
+    if not revlo_dir.is_dir():
+        return None
+
+    pattern = f"{sch.stem}-chat-*.json"
+    files = sorted(revlo_dir.glob(pattern), reverse=True)  # newest first
+
+    if not files:
+        return None
+
+    data = json.loads(files[0].read_text())
+    messages = data.get("messages", [])
+    return messages if messages else None
+
+
 def _build_review_summary(data: dict) -> str:
     """Build a human-readable summary from review JSON data.
 

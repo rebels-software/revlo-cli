@@ -426,7 +426,7 @@ class ChatPanel(Vertical):
             self.messages.append(msg)
             bubble = MessageBubble(role, content)
             if role == "assistant":
-                bubble._finalized = True
+                bubble.finalize()
             scroll.mount(bubble)
         scroll.scroll_end(animate=False)
 

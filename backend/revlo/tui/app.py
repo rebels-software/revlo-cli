@@ -685,6 +685,16 @@ class RevloApp(App[None]):
             except Exception:
                 self.mount(chat)
 
+        # Auto-load last chat history if available
+        from revlo.storage import load_latest_chat
+        history = load_latest_chat(self.schematic_path)
+        if history:
+            chat.load_history(history)
+            self._conversation = [
+                {"role": m["role"], "content": m["content"]} for m in history
+            ]
+            self.notify(f"Resumed {len(history)} messages from last session")
+
         # Update UI elements to reflect chat mode
         self._update_chat_header()
         self._update_filter_bar_for_chat()
