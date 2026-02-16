@@ -365,7 +365,7 @@ def _run_review(args: argparse.Namespace) -> None:
 
     from revlo.tui import RevloApp
 
-    app = RevloApp(report, path, review_path=saved_path)
+    app = RevloApp(report, path, review_path=saved_path, parsed_schematic=parsed)
     app.run()
 
 
@@ -560,6 +560,7 @@ def _main_inner() -> None:
         format="%(name)s: %(message)s",
         stream=sys.stderr,
     )
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
     if args.command == "review":
         _run_review(args)
     elif args.command == "open":

@@ -199,6 +199,13 @@ SeverityGroupHeader:disabled {
     color: #6B7B8D;
 }
 
+.chat-tool-status {
+    width: 1fr;
+    padding: 0 1;
+    color: #6B7B8D;
+    height: auto;
+}
+
 /* -- Empty state ---------------------------------------------------------- */
 
 #empty-state {

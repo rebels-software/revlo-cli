@@ -110,6 +110,19 @@ def build_ask_system_prompt(
         "When referencing datasheets, cite page numbers like: 'See datasheet p.42'."
     )
 
+    # 2b) Tool use instructions
+    sections.append(
+        "## Available Tools\n\n"
+        "You have tools to query the schematic in real-time:\n"
+        "- **lookup_component(ref)**: Get full details of a component (pins, nets, footprint, datasheet)\n"
+        "- **trace_net(net_name)**: See all components/pins connected to a net\n"
+        "- **find_unconnected_pins(ref?)**: Find floating pins\n"
+        "- **list_power_rails()**: List all power nets and their connections\n\n"
+        "USE THESE TOOLS to look up specific data instead of guessing. "
+        "When a user asks about a component or net, ALWAYS look it up first. "
+        "Chain multiple tool calls to trace signal paths or verify connectivity."
+    )
+
     # 3) Schematic summary
     if schematic_summary:
         sections.append(f"## Current Schematic\n\n{schematic_summary}")
@@ -300,6 +313,16 @@ class ChatPanel(Vertical):
             classes="chat-context-banner",
         )
         scroll.mount(banner)
+
+    def show_tool_status(self, status: str) -> None:
+        """Show a tool use status line in the conversation."""
+        scroll = self.query_one("#chat-scroll", VerticalScroll)
+        label = Static(
+            f"[{MUTED_GRAY}]  \u21b3 {status}[/]",
+            classes="chat-tool-status",
+        )
+        scroll.mount(label)
+        scroll.scroll_end(animate=False)
 
     def set_input_enabled(self, enabled: bool) -> None:
         """Enable or disable the chat input."""

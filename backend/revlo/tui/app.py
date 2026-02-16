@@ -13,6 +13,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
+from revlo.config import DEFAULT_MODEL
 from revlo.report.markdown import generate_markdown_report
 from revlo.reviewer.models import Finding, ReviewReport, Severity
 
@@ -397,12 +398,14 @@ class RevloApp(App[None]):
         report: ReviewReport,
         schematic_path: str,
         review_path: Path | None = None,
+        parsed_schematic: object | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.report = report
         self.schematic_path = schematic_path
         self._review_path = review_path  # Path to the .revlo review JSON
+        self._parsed_schematic = parsed_schematic
         self._sorted_findings = self._sort_findings(report.findings)
         self._chat_panel = None
         self._conversation: list[dict] = []  # API-format messages
@@ -425,6 +428,18 @@ class RevloApp(App[None]):
         if target is None:
             return list(self._sorted_findings)
         return [f for f in self._sorted_findings if f.severity == target]
+
+    def _get_parsed_schematic(self):
+        """Get or lazily parse the schematic for tool use."""
+        if self._parsed_schematic is not None:
+            return self._parsed_schematic
+        try:
+            from revlo.parser import parse_schematic
+            self._parsed_schematic = parse_schematic(self.schematic_path)
+            return self._parsed_schematic
+        except Exception:
+            logger.warning("Could not parse schematic for tool use", exc_info=True)
+            return None
 
     def compose(self) -> ComposeResult:
         sch_name = Path(self.schematic_path).name
@@ -673,42 +688,86 @@ class RevloApp(App[None]):
         )
 
     def _do_stream(self) -> None:
-        """Threaded worker that streams the Claude response using sync client."""
+        """Threaded worker: non-streaming with tool use loop, streams text to UI."""
         import anthropic
 
-        client = anthropic.Anthropic()  # sync client
+        from revlo.tui.tools import SCHEMATIC_TOOLS, execute_tool
+
+        client = anthropic.Anthropic()
+        messages = list(self._conversation)
         full_text = ""
 
-        try:
-            with client.messages.stream(
-                model="claude-opus-4-6",
-                max_tokens=4096,
-                system=self._system_prompt,
-                messages=list(self._conversation),
-            ) as stream:
-                for text in stream.text_stream:
-                    full_text += text
-                    if self._chat_panel is not None:
-                        self.call_from_thread(
-                            self._chat_panel.update_assistant_stream,
-                            full_text,
-                        )
-        except Exception as exc:
-            logger.warning("Chat stream failed: %s", exc, exc_info=True)
-            full_text = full_text or f"Error: could not reach Claude. ({exc})"
+        # Only include tools if we have a parsed schematic
+        parsed = self._get_parsed_schematic()
+        tools = SCHEMATIC_TOOLS if parsed is not None else []
+        specs = self.report.datasheet_specs or {}
+
+        max_rounds = 10
+        for _ in range(max_rounds):
+            try:
+                response = client.messages.create(
+                    model=DEFAULT_MODEL,
+                    max_tokens=4096,
+                    system=self._system_prompt,
+                    messages=messages,
+                    tools=tools if tools else anthropic.NOT_GIVEN,
+                )
+            except Exception as exc:
+                logger.warning("Chat API call failed: %s", exc, exc_info=True)
+                full_text = full_text or f"Error: could not reach Claude. ({exc})"
+                break
+
+            # Separate text and tool_use blocks
+            text_parts: list[str] = []
+            tool_uses: list = []
+            for block in response.content:
+                if block.type == "text":
+                    text_parts.append(block.text)
+                elif block.type == "tool_use":
+                    tool_uses.append(block)
+
+            # Accumulate text and update UI
+            if text_parts:
+                full_text += "".join(text_parts)
+                if self._chat_panel is not None:
+                    self.call_from_thread(
+                        self._chat_panel.update_assistant_stream, full_text
+                    )
+
+            # If no tool calls, we're done
+            if not tool_uses:
+                break
+
+            # Show tool use status in the chat
+            for tu in tool_uses:
+                status = _tool_status_text(tu.name, tu.input)
+                if self._chat_panel is not None:
+                    self.call_from_thread(
+                        self._chat_panel.show_tool_status, status
+                    )
+
+            # Build assistant message with all content blocks for the API
+            messages.append({
+                "role": "assistant",
+                "content": [_block_to_dict(b) for b in response.content],
+            })
+
+            # Execute tools and build tool_result message
+            tool_results: list[dict] = []
+            for tu in tool_uses:
+                result = execute_tool(tu.name, tu.input, parsed, specs)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu.id,
+                    "content": result,
+                })
+            messages.append({"role": "user", "content": tool_results})
 
         # Finalize the message
         if self._chat_panel is not None:
-            self.call_from_thread(
-                self._chat_panel.finish_assistant_message,
-                full_text,
-            )
-            self.call_from_thread(
-                self._chat_panel.set_input_enabled,
-                True,
-            )
+            self.call_from_thread(self._chat_panel.finish_assistant_message, full_text)
+            self.call_from_thread(self._chat_panel.set_input_enabled, True)
 
-        # Add to conversation history
         self._conversation.append({"role": "assistant", "content": full_text})
 
     # -- export / open --
@@ -737,13 +796,15 @@ class RevloApp(App[None]):
         spec = self.report.datasheet_specs.get(ref)
         if spec and spec.pdf_path and Path(spec.pdf_path).exists():
             pdf_path = spec.pdf_path
-            # Open in browser with #page=N fragment for page-specific navigation
-            # (supported by Chrome, Firefox, Edge on all platforms)
-            page_frag = ""
-            if spec.relevant_pages:
-                page_frag = f"#page={spec.relevant_pages[0]}"
-            import webbrowser
-            webbrowser.open(f"file://{pdf_path}{page_frag}")
+            import subprocess
+            import sys
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", pdf_path])
+            elif sys.platform == "win32":
+                import os
+                os.startfile(pdf_path)  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", pdf_path])
             self.notify(f"Opening datasheet for {ref} (p.{spec.relevant_pages[0]})" if spec.relevant_pages else f"Opening datasheet for {ref}")
         else:
             self.notify("No datasheet available for this finding.")
@@ -754,3 +815,36 @@ class RevloApp(App[None]):
             if self._chat_panel.messages:
                 self._save_conversation()
         self.exit()
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for tool-use loop
+# ---------------------------------------------------------------------------
+
+
+def _block_to_dict(block) -> dict:
+    """Convert an API content block to a dict for message history."""
+    if block.type == "text":
+        return {"type": "text", "text": block.text}
+    elif block.type == "tool_use":
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": block.input,
+        }
+    return {"type": block.type}
+
+
+def _tool_status_text(name: str, args: dict) -> str:
+    """Build a user-friendly status string for a tool call."""
+    if name == "lookup_component":
+        return f"Looking up {args.get('ref', '?')}..."
+    elif name == "trace_net":
+        return f"Tracing net {args.get('net_name', '?')}..."
+    elif name == "find_unconnected_pins":
+        ref = args.get("ref")
+        return f"Finding unconnected pins{' on ' + ref if ref else ''}..."
+    elif name == "list_power_rails":
+        return "Listing power rails..."
+    return f"Using {name}..."
