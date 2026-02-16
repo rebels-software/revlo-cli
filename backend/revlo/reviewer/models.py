@@ -6,6 +6,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, computed_field
 
+from revlo.datasheet.models import DatasheetSpec
+
 
 class Severity(StrEnum):
     error = "error"
@@ -50,6 +52,7 @@ class ReviewReport(BaseModel):
     summary: str = ""
     schematic_title: str = ""
     review_date: str = ""
+    datasheet_specs: dict[str, DatasheetSpec] = Field(default_factory=dict)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

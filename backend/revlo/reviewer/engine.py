@@ -259,6 +259,7 @@ async def review_schematic(
             summary="Found 0 issues (0 errors, 0 warnings, 0 suggestions)",
             schematic_title=schematic.title_block.title,
             review_date=datetime.date.today().isoformat(),
+            datasheet_specs=datasheet_specs or {},
         )
 
     # Load the comprehensive EE system prompt.
@@ -288,4 +289,5 @@ async def review_schematic(
         summary=_build_summary(all_findings),
         schematic_title=schematic.title_block.title,
         review_date=datetime.date.today().isoformat(),
+        datasheet_specs=datasheet_specs or {},
     )

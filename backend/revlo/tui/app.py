@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import webbrowser
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -13,6 +15,9 @@ from textual.widgets import Label, ListItem, ListView, Static
 
 from revlo.report.markdown import generate_markdown_report
 from revlo.reviewer.models import Finding, ReviewReport, Severity
+
+if TYPE_CHECKING:
+    from revlo.datasheet.models import DatasheetSpec
 
 # ---------------------------------------------------------------------------
 # Brand colours
@@ -229,6 +234,14 @@ class FindingsSidebar(ListView):
 class DetailPanel(Vertical):
     """Right-hand panel showing full details of the selected finding."""
 
+    def __init__(
+        self,
+        datasheet_specs: dict[str, DatasheetSpec] | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._datasheet_specs: dict[str, DatasheetSpec] = datasheet_specs or {}
+
     def compose(self) -> ComposeResult:
         yield Static(
             f"[{LIGHT_GRAY}]Select a finding to view details.[/]",
@@ -241,6 +254,27 @@ class DetailPanel(Vertical):
     def on_mount(self) -> None:
         self.query_one("#detail-description", Static).border_title = "Description"
         self.query_one("#detail-recommendation", Static).border_title = "Recommendation"
+
+    @staticmethod
+    def _format_pages(pages: list[int]) -> str:
+        """Format a list of page numbers into a compact display string.
+
+        Consecutive pages are collapsed into ranges (e.g. [3, 12, 15, 16, 17, 18]
+        becomes "p.3, 12, 15-18").
+        """
+        if not pages:
+            return ""
+        sorted_pages = sorted(pages)
+        parts: list[str] = []
+        start = prev = sorted_pages[0]
+        for p in sorted_pages[1:]:
+            if p == prev + 1:
+                prev = p
+            else:
+                parts.append(f"{start}" if start == prev else f"{start}-{prev}")
+                start = prev = p
+        parts.append(f"{start}" if start == prev else f"{start}-{prev}")
+        return "p." + ", ".join(parts)
 
     def show_finding(self, finding: Finding) -> None:
         sev = finding.severity
@@ -259,6 +293,19 @@ class DetailPanel(Vertical):
             f"[{SOFT_WHITE}]Category:[/]   [{LIGHT_GRAY}]{finding.category.value}[/]",
             f"[{SOFT_WHITE}]Confidence:[/] [{ELECTRIC_TEAL}]{bar}[/] {pct}",
         ]
+
+        # Show datasheet info if available for this component.
+        spec = self._datasheet_specs.get(finding.component_ref)
+        if spec and spec.pdf_path:
+            pdf_name = Path(spec.pdf_path).name
+            header_lines.append(
+                f"[{SOFT_WHITE}]Datasheet:[/]  [{LIGHT_GRAY}]{pdf_name}[/]"
+            )
+            if spec.relevant_pages:
+                pages_str = self._format_pages(spec.relevant_pages)
+                header_lines.append(
+                    f"[{SOFT_WHITE}]Pages:[/]      [{LIGHT_GRAY}]{pages_str}[/]"
+                )
 
         self.query_one("#detail-placeholder", Static).styles.display = "none"
         content = self.query_one("#detail-content", Static)
@@ -381,7 +428,10 @@ class RevloApp(App[None]):
                     self._filtered_findings(),
                     id="sidebar",
                 )
-                yield DetailPanel(id="detail-panel")
+                yield DetailPanel(
+                    datasheet_specs=self.report.datasheet_specs,
+                    id="detail-panel",
+                )
         yield FilterBar(id="filter-bar")
 
     # -- events --
@@ -460,4 +510,11 @@ class RevloApp(App[None]):
         highlighted = sidebar.highlighted_child
         if not isinstance(highlighted, FindingItem):
             return
-        self.notify("No datasheet URL available for this finding.")
+
+        ref = highlighted.finding.component_ref
+        spec = self.report.datasheet_specs.get(ref)
+        if spec and spec.pdf_path and Path(spec.pdf_path).exists():
+            webbrowser.open(f"file://{spec.pdf_path}")
+            self.notify(f"Opening datasheet for {ref}")
+        else:
+            self.notify("No datasheet available for this finding.")
