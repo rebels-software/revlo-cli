@@ -12,6 +12,7 @@ import re
 import kicad_sch_api as ksa
 
 from revlo.parser.models import ParsedComponent, ParsedNet, PinConnection
+from revlo.parser.netlist import NetlistData
 
 logger = logging.getLogger(__name__)
 
@@ -200,3 +201,73 @@ def build_merged_net_list(
                 merged_nets[net.name] = net
 
     return list(merged_nets.values()), all_unconnected
+
+
+def build_nets_from_netlist(
+    netlist: NetlistData,
+    all_components: list[ParsedComponent],
+) -> tuple[list[ParsedNet], list[PinConnection]]:
+    """Build nets + unconnected pins from kicad-cli netlist data.
+
+    Uses ground-truth connectivity from ``kicad-cli sch export netlist``
+    instead of kicad-sch-api's connectivity analyser.
+
+    Args:
+        netlist: Parsed netlist data with pin-to-net mappings.
+        all_components: All components including power symbols.
+
+    Returns:
+        A tuple of (nets, unconnected_pins).
+    """
+    nets_by_name: dict[str, ParsedNet] = {}
+    unconnected_pins: list[PinConnection] = []
+
+    # Pre-compute refs per net for power classification (done once).
+    _net_refs_cache: dict[str, list[str]] = {}
+
+    for comp in all_components:
+        for pin in comp.pins:
+            net_name = netlist.pin_nets.get((comp.reference, pin.number))
+            if net_name is None:
+                unconnected_pins.append(
+                    PinConnection(
+                        component_ref=comp.reference,
+                        pin_number=pin.number,
+                        pin_name=pin.name,
+                    )
+                )
+                continue
+
+            if net_name not in nets_by_name:
+                # Collect refs of all pins on this net for power classification.
+                if net_name not in _net_refs_cache:
+                    connected_refs = [
+                        ref
+                        for (ref, _pin), name in netlist.pin_nets.items()
+                        if name == net_name
+                    ]
+                    _net_refs_cache[net_name] = connected_refs
+
+                nets_by_name[net_name] = ParsedNet(
+                    name=net_name,
+                    pins=[],
+                    labels=[],
+                    is_power=_is_power_net(
+                        net_name, _net_refs_cache[net_name]
+                    ),
+                )
+
+            pin_conn = PinConnection(
+                component_ref=comp.reference,
+                pin_number=pin.number,
+                pin_name=pin.name,
+            )
+            existing = nets_by_name[net_name].pins
+            if not any(
+                p.component_ref == pin_conn.component_ref
+                and p.pin_number == pin_conn.pin_number
+                for p in existing
+            ):
+                existing.append(pin_conn)
+
+    return list(nets_by_name.values()), unconnected_pins

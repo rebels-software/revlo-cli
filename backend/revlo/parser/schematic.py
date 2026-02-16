@@ -11,8 +11,9 @@ from pathlib import Path
 
 import kicad_sch_api as ksa
 from kicad_sch_api.core.connectivity import Net
+from kicad_sch_api.core.types import PinShape, PinType, Point, SchematicPin
 
-from revlo.parser.connectivity import build_merged_net_list
+from revlo.parser.connectivity import build_merged_net_list, build_nets_from_netlist
 from revlo.parser.models import (
     ParsedComponent,
     ParsedPin,
@@ -20,6 +21,7 @@ from revlo.parser.models import (
     ParsedSheet,
     TitleBlockInfo,
 )
+from revlo.parser.netlist import NetlistData
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,227 @@ def _patch_net_hash() -> None:
 # Apply the patch at import time so any code path that touches connectivity
 # (including ``build_net_list`` and ``get_net_for_pin``) is safe.
 _patch_net_hash()
+
+
+# ---------------------------------------------------------------------------
+# KiCad 9 pin patching
+# ---------------------------------------------------------------------------
+# KiCad 9 stores pin references (pin_uuids) in component instances but does
+# not populate the ``pins`` list on ``SchematicSymbol``.  The actual pin
+# definitions exist in the embedded ``(lib_symbols ...)`` section of the raw
+# file content.  We parse them here and inject ``SchematicPin`` objects so
+# that the kicad-sch-api connectivity analyser can trace wires to pins.
+
+_PIN_TYPE_MAP: dict[str, PinType] = {
+    "input": PinType.INPUT,
+    "output": PinType.OUTPUT,
+    "bidirectional": PinType.BIDIRECTIONAL,
+    "passive": PinType.PASSIVE,
+    "power_in": PinType.POWER_IN,
+    "power_out": PinType.POWER_OUT,
+    "tri_state": PinType.TRISTATE,
+    "open_collector": PinType.OPEN_COLLECTOR,
+    "open_emitter": PinType.OPEN_EMITTER,
+    "unspecified": PinType.UNSPECIFIED,
+    "free": PinType.FREE,
+    "no_connect": PinType.NO_CONNECT,
+}
+
+_PIN_SHAPE_MAP: dict[str, PinShape] = {
+    "line": PinShape.LINE,
+    "inverted": PinShape.INVERTED,
+    "clock": PinShape.CLOCK,
+    "inverted_clock": PinShape.INVERTED_CLOCK,
+    "input_low": PinShape.INPUT_LOW,
+    "clock_low": PinShape.CLOCK_LOW,
+    "output_low": PinShape.OUTPUT_LOW,
+    "edge_clock_high": PinShape.EDGE_CLOCK_HIGH,
+    "non_logic": PinShape.NON_LOGIC,
+}
+
+# Regex to extract individual pin blocks with positional data from a symbol
+# S-expression.  Captures: pin_type, pin_shape, then we parse sub-elements.
+_PIN_BLOCK_RE = re.compile(
+    r"\(pin\s+(\w+)\s+(\w+)\s+"  # (pin TYPE SHAPE
+    r"(.*?)"                       # body with (at ...) (length ...) etc.
+    r"\)\s*\)\s*\)",               # close number, close pin
+    re.DOTALL,
+)
+
+# Sub-element regexes for pin block body
+_PIN_AT_RE = re.compile(
+    r"\(at\s+([-\d.]+)\s+([-\d.]+)(?:\s+([-\d.]+))?\s*\)",
+)
+_PIN_LENGTH_RE = re.compile(r"\(length\s+([-\d.]+)\s*\)")
+_PIN_NAME_RE = re.compile(r'\(name\s+"([^"]*)"')
+_PIN_NUMBER_RE = re.compile(r'\(number\s+"([^"]*)"')
+
+
+def _extract_symbol_block(raw_content: str, lib_id: str) -> str:
+    """Extract the ``(symbol "<lib_id>" ...)`` S-expression block.
+
+    Returns the full block string, or empty string if not found.
+    """
+    marker = f'(symbol "{lib_id}"'
+    start = raw_content.find(marker)
+    if start == -1:
+        return ""
+
+    depth = 0
+    for i in range(start, len(raw_content)):
+        if raw_content[i] == "(":
+            depth += 1
+        elif raw_content[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return raw_content[start : i + 1]
+    return ""
+
+
+def _parse_pins_from_symbol_block(
+    symbol_block: str,
+) -> dict[str, SchematicPin]:
+    """Parse all ``(pin ...)`` definitions from a lib_symbol S-expression block.
+
+    Searches recursively through all sub-symbols (e.g. ``R_1_1``,
+    ``MSPM0G3507SPTR_1_1``) to collect every pin.
+
+    Returns:
+        Mapping of pin_number to ``SchematicPin`` with LOCAL coordinates
+        (relative to the symbol origin).
+    """
+    pins: dict[str, SchematicPin] = {}
+
+    # Find all (pin ...) blocks using parenthesis-balanced extraction
+    idx = 0
+    while True:
+        pin_start = symbol_block.find("(pin ", idx)
+        if pin_start == -1:
+            break
+
+        # Balanced-paren extraction of this pin block
+        depth = 0
+        pin_end = pin_start
+        for i in range(pin_start, len(symbol_block)):
+            if symbol_block[i] == "(":
+                depth += 1
+            elif symbol_block[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    pin_end = i + 1
+                    break
+
+        pin_text = symbol_block[pin_start:pin_end]
+        idx = pin_end
+
+        # Parse the pin block
+        pin = _parse_single_pin_block(pin_text)
+        if pin is not None:
+            pins[pin.number] = pin
+
+    return pins
+
+
+def _parse_single_pin_block(pin_text: str) -> SchematicPin | None:
+    """Parse a single ``(pin TYPE SHAPE ...)`` S-expression into a SchematicPin."""
+    # Extract type and shape from the opening
+    head_match = re.match(r"\(pin\s+(\w+)\s+(\w+)", pin_text)
+    if not head_match:
+        return None
+
+    pin_type_str = head_match.group(1)
+    pin_shape_str = head_match.group(2)
+
+    # Extract sub-elements
+    at_match = _PIN_AT_RE.search(pin_text)
+    length_match = _PIN_LENGTH_RE.search(pin_text)
+    name_match = _PIN_NAME_RE.search(pin_text)
+    number_match = _PIN_NUMBER_RE.search(pin_text)
+
+    if not number_match:
+        return None
+
+    x = float(at_match.group(1)) if at_match else 0.0
+    y = float(at_match.group(2)) if at_match else 0.0
+    rotation = float(at_match.group(3)) if at_match and at_match.group(3) else 0.0
+    length = float(length_match.group(1)) if length_match else 2.54
+    name = name_match.group(1) if name_match else ""
+    number = number_match.group(1)
+
+    return SchematicPin(
+        number=number,
+        name=name,
+        position=Point(x=x, y=y),
+        pin_type=_PIN_TYPE_MAP.get(pin_type_str, PinType.PASSIVE),
+        pin_shape=_PIN_SHAPE_MAP.get(pin_shape_str, PinShape.LINE),
+        length=length,
+        rotation=rotation,
+    )
+
+
+def _patch_kicad9_pins(sch: ksa.Schematic) -> None:
+    """Populate empty ``comp._data.pins`` from embedded lib_symbols for KiCad 9.
+
+    KiCad 9 stores pin references (``pin_uuids``) in component instances but
+    does not populate the ``pins`` list.  The actual pin definitions exist in
+    the embedded ``(lib_symbols ...)`` section.  This function resolves them
+    so that the kicad-sch-api connectivity analyser can trace wires to pins.
+
+    This must be called RIGHT AFTER loading the schematic and BEFORE any
+    connectivity analysis runs.
+    """
+    raw_content: str = sch._data.get("_original_content", "")
+    if not raw_content:
+        return
+
+    # Cache of lib_id -> {pin_number: SchematicPin} from embedded lib_symbols
+    lib_pin_cache: dict[str, dict[str, SchematicPin]] = {}
+
+    for comp in sch.components:
+        # Only patch components that have empty pins but non-empty pin_uuids
+        if comp._data.pins:
+            continue
+        if not (hasattr(comp._data, "pin_uuids") and comp._data.pin_uuids):
+            continue
+
+        lib_id = comp.lib_id
+        if lib_id not in lib_pin_cache:
+            symbol_block = _extract_symbol_block(raw_content, lib_id)
+            if symbol_block:
+                lib_pin_cache[lib_id] = _parse_pins_from_symbol_block(
+                    symbol_block,
+                )
+            else:
+                lib_pin_cache[lib_id] = {}
+
+        cached_pins = lib_pin_cache[lib_id]
+        if not cached_pins:
+            continue
+
+        # Build the pins list using only pins that appear in pin_uuids
+        # (these are the pins actually placed on this component instance).
+        new_pins: list[SchematicPin] = []
+        for pin_num in comp._data.pin_uuids:
+            if pin_num in cached_pins:
+                new_pins.append(cached_pins[pin_num])
+            else:
+                # Pin number in pin_uuids but not in lib_symbol -- create a
+                # minimal placeholder so connectivity still has something.
+                new_pins.append(
+                    SchematicPin(
+                        number=pin_num,
+                        name=pin_num,
+                        position=Point(x=0.0, y=0.0),
+                    )
+                )
+
+        comp._data.pins = new_pins
+        logger.debug(
+            "Patched %d pins onto %s (%s)",
+            len(new_pins),
+            comp.reference,
+            lib_id,
+        )
 
 
 def _detect_unsupported_format(sch_path: Path) -> None:
@@ -77,7 +300,7 @@ def _detect_unsupported_format(sch_path: Path) -> None:
         )
 
 
-def parse_schematic(path: str) -> ParsedSchematic:
+def parse_schematic(path: str, netlist: NetlistData | None = None) -> ParsedSchematic:
     """Parse a KiCad schematic file into a structured ParsedSchematic model.
 
     Recursively discovers and loads hierarchical sub-sheets so that all
@@ -85,6 +308,9 @@ def parse_schematic(path: str) -> ParsedSchematic:
 
     Args:
         path: Filesystem path to a .kicad_sch file.
+        netlist: Optional ground-truth netlist data from kicad-cli export.
+            When provided, pin connectivity is sourced from this data instead
+            of kicad-sch-api's connectivity analyser.
 
     Returns:
         A fully populated ParsedSchematic instance with components from all
@@ -103,8 +329,12 @@ def parse_schematic(path: str) -> ParsedSchematic:
 
     sch = ksa.Schematic.load(str(sch_path))
 
+    # Patch KiCad 9 empty pins from embedded lib_symbols BEFORE any
+    # connectivity analysis runs.
+    _patch_kicad9_pins(sch)
+
     title_block = _extract_title_block(sch)
-    components, power_symbols = _extract_components(sch)
+    components, power_symbols = _extract_components(sch, netlist=netlist)
     sheets = _extract_sheets(sch)
 
     # Collect (schematic, components) pairs for merged net building.
@@ -125,10 +355,17 @@ def parse_schematic(path: str) -> ParsedSchematic:
         all_power_symbols=all_power_symbols,
         sheet_pairs=sheet_pairs,
         visited=visited,
+        netlist=netlist,
     )
 
-    # Build merged nets across all sheets.
-    nets, unconnected_pins = build_merged_net_list(sheet_pairs)
+    # Build nets: prefer ground-truth netlist when available.
+    if netlist is not None:
+        nets, unconnected_pins = build_nets_from_netlist(
+            netlist, all_components + all_power_symbols
+        )
+    else:
+        # Existing kicad-sch-api path
+        nets, unconnected_pins = build_merged_net_list(sheet_pairs)
 
     return ParsedSchematic(
         components=all_components,
@@ -147,6 +384,7 @@ def _load_sub_sheets(
     all_power_symbols: list[ParsedComponent],
     sheet_pairs: list[tuple[ksa.Schematic, list[ParsedComponent]]],
     visited: set[str],
+    netlist: NetlistData | None = None,
 ) -> None:
     """Recursively load hierarchical sub-sheets and collect their components.
 
@@ -157,6 +395,7 @@ def _load_sub_sheets(
         all_power_symbols: Accumulator for power symbols across all sheets.
         sheet_pairs: Accumulator of (schematic, all_components) pairs for net merging.
         visited: Set of resolved absolute paths already visited (cycle detection).
+        netlist: Optional ground-truth netlist data for pin connectivity.
     """
     for sheet in sheets:
         sub_path = parent_dir / sheet.filename
@@ -186,10 +425,13 @@ def _load_sub_sheets(
             )
             continue
 
+        _patch_kicad9_pins(sub_sch)
+
         sub_components, sub_power = _extract_components(
             sub_sch,
             source_sheet=sheet.name,
             sheet_instance_uuid=sheet.uuid,
+            netlist=netlist,
         )
         all_components.extend(sub_components)
         all_power_symbols.extend(sub_power)
@@ -205,6 +447,7 @@ def _load_sub_sheets(
                 all_power_symbols=all_power_symbols,
                 sheet_pairs=sheet_pairs,
                 visited=visited,
+                netlist=netlist,
             )
 
 
@@ -288,6 +531,7 @@ def _extract_components(
     sch: ksa.Schematic,
     source_sheet: str = "",
     sheet_instance_uuid: str = "",
+    netlist: NetlistData | None = None,
 ) -> tuple[list[ParsedComponent], list[ParsedComponent]]:
     """Extract components and separate power symbols.
 
@@ -300,6 +544,7 @@ def _extract_components(
             ``instances`` section of the KiCad file so that sub-sheet
             components get their annotated designators (e.g. ``U1``
             instead of ``U?``).
+        netlist: Optional ground-truth netlist data for pin connectivity.
 
     Returns:
         A tuple of (regular_components, power_symbols).
@@ -309,7 +554,7 @@ def _extract_components(
 
     for comp in sch.components:
         resolved_ref = _resolve_instance_reference(comp, sheet_instance_uuid)
-        pins = _extract_pins(sch, comp)
+        pins = _extract_pins(sch, comp, netlist=netlist, resolved_ref=resolved_ref)
 
         parsed = ParsedComponent(
             reference=resolved_ref,
@@ -428,7 +673,12 @@ def _get_lib_symbol_pins(
     return pins
 
 
-def _extract_pins(sch: ksa.Schematic, comp: ksa.Component) -> list[ParsedPin]:
+def _extract_pins(
+    sch: ksa.Schematic,
+    comp: ksa.Component,
+    netlist: NetlistData | None = None,
+    resolved_ref: str | None = None,
+) -> list[ParsedPin]:
     """Extract pin data for a single component, including net connectivity.
 
     Supports two code paths:
@@ -439,15 +689,26 @@ def _extract_pins(sch: ksa.Schematic, comp: ksa.Component) -> list[ParsedPin]:
       contains a ``{pin_number: uuid}`` dict.  Pin metadata (name,
       electrical type) is resolved from library symbols or the embedded
       ``(lib_symbols ...)`` section.
+
+    When *netlist* is provided, pin connectivity comes from the ground-truth
+    netlist data rather than kicad-sch-api's connectivity analyser.
     """
     parsed_pins: list[ParsedPin] = []
+    # The netlist uses annotated refs (e.g. U1), so prefer resolved_ref.
+    ref_for_netlist = resolved_ref or comp.reference
 
     if comp.pins:
         # Original path for KiCad 6/7/8.
         for pin in comp.pins:
             pin_pos = comp.get_pin_position(pin.number)
             position = (pin_pos.x, pin_pos.y) if pin_pos else (0.0, 0.0)
-            connected_net = _get_net_name(sch, comp.reference, pin.number)
+
+            if netlist is not None:
+                connected_net = netlist.pin_nets.get(
+                    (ref_for_netlist, pin.number)
+                )
+            else:
+                connected_net = _get_net_name(sch, comp.reference, pin.number)
 
             parsed_pins.append(
                 ParsedPin(
@@ -479,7 +740,12 @@ def _extract_pins(sch: ksa.Schematic, comp: ksa.Component) -> list[ParsedPin]:
             except Exception:
                 position = (0.0, 0.0)
 
-            connected_net = _get_net_name(sch, comp.reference, pin_num)
+            if netlist is not None:
+                connected_net = netlist.pin_nets.get(
+                    (ref_for_netlist, pin_num)
+                )
+            else:
+                connected_net = _get_net_name(sch, comp.reference, pin_num)
 
             parsed_pins.append(
                 ParsedPin(

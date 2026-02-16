@@ -160,6 +160,7 @@ def test_build_parser_open_with_flags():
 # ---------------------------------------------------------------------------
 # Test _run_review success path
 # ---------------------------------------------------------------------------
+@patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
@@ -170,6 +171,7 @@ def test_run_review_success_markdown(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
     mock_save: MagicMock,
+    mock_netlist: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -187,7 +189,7 @@ def test_run_review_success_markdown(
         args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet", "--no-tui"])
         _run_review(args)
 
-    mock_parse.assert_called_once_with(fixture_path)
+    mock_parse.assert_called_once_with(fixture_path, netlist=None)
     mock_asyncio_run.assert_called_once()
 
     captured = capsys.readouterr()
@@ -195,6 +197,7 @@ def test_run_review_success_markdown(
     assert "ERROR" in captured.err or "U1" in captured.err
 
 
+@patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
@@ -203,6 +206,7 @@ def test_run_review_success_json(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
     mock_save: MagicMock,
+    mock_netlist: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -218,7 +222,7 @@ def test_run_review_success_json(
         args = _build_parser().parse_args(["review", fixture_path, "--json", "--skip-datasheet"])
         _run_review(args)
 
-    mock_parse.assert_called_once_with(fixture_path)
+    mock_parse.assert_called_once_with(fixture_path, netlist=None)
     mock_asyncio_run.assert_called_once()
 
     captured = capsys.readouterr()
@@ -227,6 +231,7 @@ def test_run_review_success_json(
     assert "summary" in captured.out
 
 
+@patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
@@ -237,6 +242,7 @@ def test_run_review_success_output_file(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
     mock_save: MagicMock,
+    mock_netlist: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -258,7 +264,7 @@ def test_run_review_success_output_file(
         )
         _run_review(args)
 
-    mock_parse.assert_called_once_with(fixture_path)
+    mock_parse.assert_called_once_with(fixture_path, netlist=None)
     mock_asyncio_run.assert_called_once()
     mock_markdown.assert_called_once_with(mock_review_report)
 
@@ -271,6 +277,7 @@ def test_run_review_success_output_file(
     assert captured.out == ""
 
 
+@patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
@@ -279,6 +286,7 @@ def test_run_review_success_json_to_file(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
     mock_save: MagicMock,
+    mock_netlist: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     mock_review_report: ReviewReport,
     fixture_path: str,
@@ -298,7 +306,7 @@ def test_run_review_success_json_to_file(
         )
         _run_review(args)
 
-    mock_parse.assert_called_once_with(fixture_path)
+    mock_parse.assert_called_once_with(fixture_path, netlist=None)
     mock_asyncio_run.assert_called_once()
 
     # Verify file was written with JSON content
@@ -793,9 +801,14 @@ def test_run_review_missing_api_key(fixture_path: str):
         assert exc.value.code == 1
 
 
+@patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.cli.parse_schematic")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
-def test_run_review_parse_error(mock_parse: MagicMock, fixture_path: str):
+def test_run_review_parse_error(
+    mock_parse: MagicMock,
+    mock_netlist: MagicMock,
+    fixture_path: str,
+):
     """Test error when parse_schematic raises an exception."""
     mock_parse.side_effect = ValueError("Invalid schematic format")
 
@@ -804,13 +817,15 @@ def test_run_review_parse_error(mock_parse: MagicMock, fixture_path: str):
         _run_review(args)
     assert exc.value.code == 1
 
-    mock_parse.assert_called_once_with(fixture_path)
+    mock_parse.assert_called_once_with(fixture_path, netlist=None)
 
 
+@patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.cli.parse_schematic")
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
 def test_run_review_review_error(
     mock_parse: MagicMock,
+    mock_netlist: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
     fixture_path: str,
 ):
@@ -825,7 +840,7 @@ def test_run_review_review_error(
             _run_review(args)
         assert exc.value.code == 1
 
-    mock_parse.assert_called_once_with(fixture_path)
+    mock_parse.assert_called_once_with(fixture_path, netlist=None)
 
 
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))

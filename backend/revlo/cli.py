@@ -139,11 +139,27 @@ def _run_review(args: argparse.Namespace) -> None:
     if show_rich:
         print_header(console)
 
+    # Export netlist for ground-truth connectivity (if kicad-cli available)
+    from revlo.parser.netlist import try_export_netlist
+
+    netlist = None
+    if show_rich:
+        print_step(console, "Exporting netlist...")
+    netlist = try_export_netlist(path)
+    if show_rich:
+        if netlist is not None:
+            n_pins = len(netlist.pin_nets)
+            print_step(console, f"Netlist: {n_pins} pin connections")
+        else:
+            console.print(
+                f"  [{AMBER}]kicad-cli not found -- using fallback connectivity[/{AMBER}]"
+            )
+
     # Parse schematic
     if show_rich:
         print_step(console, "Parsing schematic...")
     try:
-        parsed = parse_schematic(path)
+        parsed = parse_schematic(path, netlist=netlist)
     except Exception as exc:
         print(f"Error: failed to parse schematic: {exc}", file=sys.stderr)
         sys.exit(1)
