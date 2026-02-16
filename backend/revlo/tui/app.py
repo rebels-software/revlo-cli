@@ -746,7 +746,8 @@ class RevloApp(App[None]):
         self._conversation.append({"role": "user", "content": text})
 
         # Start streaming assistant response
-        self._chat_panel.start_assistant_message()
+        placeholder = "Deep thinking..." if self._thinking_enabled else "Thinking..."
+        self._chat_panel.start_assistant_message(placeholder)
         self._stream_response()
 
     @property
@@ -778,7 +779,9 @@ class RevloApp(App[None]):
 
         from revlo.tui.tools import SCHEMATIC_TOOLS, execute_tool
 
-        client = anthropic.Anthropic()
+        # Extended thinking needs a longer timeout (Opus may think for minutes)
+        timeout = 600.0 if self._thinking_enabled else 120.0
+        client = anthropic.Anthropic(timeout=timeout)
         messages = list(self._conversation)
         full_text = ""
 

@@ -332,10 +332,10 @@ class ChatPanel(Vertical):
         scroll.mount(MessageBubble("user", text))
         scroll.scroll_end(animate=False)
 
-    def start_assistant_message(self) -> None:
+    def start_assistant_message(self, placeholder: str = "Thinking...") -> None:
         """Add a placeholder for the assistant response (for streaming)."""
         scroll = self.query_one("#chat-scroll", VerticalScroll)
-        bubble = MessageBubble("assistant", "Thinking...")
+        bubble = MessageBubble("assistant", placeholder)
         self._streaming_bubble = bubble
         scroll.mount(bubble)
         scroll.scroll_end(animate=False)
