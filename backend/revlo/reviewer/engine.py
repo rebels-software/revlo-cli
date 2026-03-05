@@ -336,6 +336,7 @@ async def review_schematic(
         schematic,
         enabled=enable_deterministic_checks,
         bom=bom,
+        project_constraints=project_constraints,
     )
 
     # Inject datasheet specs into chunks when available.

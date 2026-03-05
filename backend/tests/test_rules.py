@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from revlo.bom import BomDocument, BomItem
+from revlo.constraints import ConstraintItem, ProjectConstraints
 from revlo.parser.models import (
     ParsedComponent,
     ParsedNet,
@@ -31,7 +32,13 @@ from revlo.reviewer.rules import (
 class _StubRule:
     name: str = "stub"
 
-    def evaluate(self, schematic: ParsedSchematic, *, bom: BomDocument | None = None) -> list[Finding]:
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
+    ) -> list[Finding]:
         assert schematic.title_block.title == "Rule Test"
         return []
 
@@ -193,3 +200,28 @@ def test_bom_sourcing_rule_reports_missing_mpn_and_footprint_mismatch():
     titles = {finding.title for finding in findings}
     assert "BOM item missing manufacturer part number" in titles
     assert "BOM footprint mismatch" in titles
+
+
+def test_constraint_notes_are_attached_to_matching_findings():
+    constraints = ProjectConstraints(
+        constraints=[
+            ConstraintItem(
+                kind="rail_voltage",
+                name="Main 3V3 rail",
+                target="+3V3",
+                value="3.3",
+                unit="V",
+            )
+        ]
+    )
+
+    findings = DecouplingPresenceRule().evaluate(
+        _make_rule_test_schematic(),
+        project_constraints=constraints,
+    )
+
+    assert findings
+    assert any(
+        note.startswith("Constraint unverified:")
+        for note in findings[0].evidence.notes
+    )

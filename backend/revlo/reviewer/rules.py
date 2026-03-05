@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from revlo.bom import BomDocument
+from revlo.constraints import ConstraintItem, ProjectConstraints
 from revlo.parser.models import ParsedComponent, ParsedNet, ParsedPin, ParsedSchematic
 from revlo.reviewer.models import (
     Finding,
@@ -29,6 +30,7 @@ class DeterministicRule(Protocol):
         schematic: ParsedSchematic,
         *,
         bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
     ) -> list[Finding]:
         """Evaluate the rule against a parsed schematic."""
 
@@ -117,6 +119,39 @@ def _has_i2c_pullup(net: ParsedNet, schematic: ParsedSchematic) -> bool:
     return False
 
 
+def _format_constraint(constraint: ConstraintItem) -> str:
+    summary = f"{constraint.kind}: {constraint.name}"
+    if constraint.target:
+        summary += f" [target={constraint.target}]"
+    if constraint.value:
+        summary += f" -> {constraint.value}"
+        if constraint.unit:
+            summary += f" {constraint.unit}"
+    return summary
+
+
+def _constraint_notes(
+    *,
+    refs: list[str],
+    nets: list[str],
+    project_constraints: ProjectConstraints | None,
+    status: str,
+) -> list[str]:
+    if project_constraints is None:
+        return []
+
+    ref_set = {ref.upper() for ref in refs}
+    net_set = {net.upper() for net in nets}
+    notes: list[str] = []
+    for constraint in project_constraints.constraints:
+        target = constraint.target.strip().upper()
+        if not target:
+            continue
+        if target in ref_set or target in net_set:
+            notes.append(f"Constraint {status}: {_format_constraint(constraint)}")
+    return notes
+
+
 @dataclass(slots=True)
 class PowerConnectivityRule:
     name: str = "power_connectivity"
@@ -126,6 +161,7 @@ class PowerConnectivityRule:
         schematic: ParsedSchematic,
         *,
         bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
     ) -> list[Finding]:
         findings: list[Finding] = []
         unconnected = _build_unconnected_set(schematic)
@@ -151,7 +187,15 @@ class PowerConnectivityRule:
                         evidence=FindingEvidence(
                             refs=[component.reference],
                             sheet_paths=[component.source_sheet] if component.source_sheet else [],
-                            notes=[f"Power pin electrical type: {pin.electrical_type}"],
+                            notes=[
+                                f"Power pin electrical type: {pin.electrical_type}",
+                                *_constraint_notes(
+                                    refs=[component.reference],
+                                    nets=[pin.connected_net] if pin.connected_net else [],
+                                    project_constraints=project_constraints,
+                                    status="violated",
+                                ),
+                            ],
                         ),
                     )
                 )
@@ -167,6 +211,7 @@ class DecouplingPresenceRule:
         schematic: ParsedSchematic,
         *,
         bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
     ) -> list[Finding]:
         findings: list[Finding] = []
         net_lookup = _build_net_lookup(schematic)
@@ -196,6 +241,12 @@ class DecouplingPresenceRule:
                             refs=[component.reference],
                             nets=[net_name],
                             sheet_paths=[component.source_sheet] if component.source_sheet else [],
+                            notes=_constraint_notes(
+                                refs=[component.reference],
+                                nets=[net_name],
+                                project_constraints=project_constraints,
+                                status="unverified",
+                            ),
                         ),
                     )
                 )
@@ -211,6 +262,7 @@ class I2CBusPullupRule:
         schematic: ParsedSchematic,
         *,
         bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
     ) -> list[Finding]:
         findings: list[Finding] = []
         for net in schematic.nets:
@@ -240,6 +292,12 @@ class I2CBusPullupRule:
                     evidence=FindingEvidence(
                         refs=refs,
                         nets=[net.name],
+                        notes=_constraint_notes(
+                            refs=refs,
+                            nets=[net.name],
+                            project_constraints=project_constraints,
+                            status="unverified",
+                        ),
                     ),
                 )
             )
@@ -255,6 +313,7 @@ class LibraryHygieneRule:
         schematic: ParsedSchematic,
         *,
         bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
     ) -> list[Finding]:
         findings: list[Finding] = []
         ref_counts: dict[str, int] = {}
@@ -327,6 +386,7 @@ class BOMCoverageRule:
         schematic: ParsedSchematic,
         *,
         bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
     ) -> list[Finding]:
         if bom is None:
             return []
@@ -373,6 +433,7 @@ class BOMSourcingRule:
         schematic: ParsedSchematic,
         *,
         bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
     ) -> list[Finding]:
         if bom is None:
             return []
@@ -451,10 +512,17 @@ class DeterministicRuleEngine:
         schematic: ParsedSchematic,
         *,
         bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
     ) -> list[Finding]:
         findings: list[Finding] = []
         for rule in self.rules:
-            findings.extend(rule.evaluate(schematic, bom=bom))
+            findings.extend(
+                rule.evaluate(
+                    schematic,
+                    bom=bom,
+                    project_constraints=project_constraints,
+                )
+            )
         return findings
 
 
@@ -474,6 +542,7 @@ def run_deterministic_checks(
     enabled: bool | None = None,
     engine: DeterministicRuleEngine | None = None,
     bom: BomDocument | None = None,
+    project_constraints: ProjectConstraints | None = None,
 ) -> list[Finding]:
     """Run deterministic schematic checks without provider access."""
     if not resolve_deterministic_checks_enabled(enabled):
@@ -489,4 +558,8 @@ def run_deterministic_checks(
             BOMSourcingRule(),
         )
     )
-    return resolved_engine.evaluate(schematic, bom=bom)
+    return resolved_engine.evaluate(
+        schematic,
+        bom=bom,
+        project_constraints=project_constraints,
+    )
