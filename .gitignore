@@ -9,6 +9,7 @@
 
 # Revlo
 .revlo/
+prd.json
 
 # Environment variables
 .env
