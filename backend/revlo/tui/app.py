@@ -15,6 +15,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
+from revlo.constraints import ProjectConstraints
 from revlo.config import DEFAULT_PROVIDER, LLMProvider, resolve_ask_model, resolve_provider
 from revlo.report.markdown import generate_markdown_report
 from revlo.reviewer.models import Finding, ReviewReport, Severity
@@ -482,6 +483,7 @@ class RevloApp(App[None]):
         schematic_path: str,
         review_path: Path | None = None,
         parsed_schematic: object | None = None,
+        project_constraints: ProjectConstraints | None = None,
         provider: str | LLMProvider | None = None,
         ask_model: str | None = None,
         **kwargs,
@@ -492,6 +494,7 @@ class RevloApp(App[None]):
         self._review_path = review_path  # Path to the .revlo review JSON
         self._parsed_schematic = parsed_schematic
         self._parsed_schematic_resolved = parsed_schematic is not None
+        self._project_constraints = project_constraints
         self._sorted_findings = self._sort_findings(report.findings)
         self._chat_panel = None
         self._conversation: list[dict] = []  # API-format messages
@@ -585,6 +588,9 @@ class RevloApp(App[None]):
         if not text:
             return
         event.input.value = ""
+        if text.lower() in {"/generic", "/clear"}:
+            self.action_clear_investigation()
+            return
         self._send_chat_message(text)
 
     # -- escape handling --
@@ -660,6 +666,18 @@ class RevloApp(App[None]):
         self._update_chat_header()
         self._update_filter_bar_for_chat()
 
+    def action_clear_investigation(self) -> None:
+        """Clear the current investigation target and stay in generic Ask Mode."""
+        if not self._chat_mode:
+            return
+        if self._investigation_target is None:
+            self.notify("Already in generic Ask Mode")
+            return
+        self._investigation_target = None
+        self.notify("Cleared investigation target")
+        self._update_chat_header()
+        self._update_filter_bar_for_chat()
+
     def _get_highlighted_finding(self) -> Finding | None:
         """Return the currently highlighted finding, if any."""
         try:
@@ -728,7 +746,8 @@ class RevloApp(App[None]):
             f"  [{ELECTRIC_TEAL}]t[/][{MUTED_GRAY}]hinking {thinking_label}[/]"
         )
         fbar.query_one("#filter-right", Label).update(
-            f"[{MUTED_GRAY}]\\[[/][{SOFT_WHITE}]esc[/][{MUTED_GRAY}]] back  "
+            f"[{MUTED_GRAY}]\\[[/][{SOFT_WHITE}]/generic[/][{MUTED_GRAY}]] clear target  "
+            f"\\[[/][{SOFT_WHITE}]esc[/][{MUTED_GRAY}]] back  "
             f"\\[[/][{SOFT_WHITE}]q[/][{MUTED_GRAY}]] quit[/]"
         )
 
@@ -986,7 +1005,14 @@ class RevloApp(App[None]):
                         args = json.loads(getattr(tool_call, "arguments", "") or "{}")
                     except json.JSONDecodeError:
                         args = {}
-                    result = execute_tool(tool_call.name, args, parsed, specs)
+                    result = execute_tool(
+                        tool_call.name,
+                        args,
+                        parsed,
+                        specs,
+                        report=self.report,
+                        constraints=self._project_constraints,
+                    )
                     pending_input.append(
                         {
                             "type": "function_call_output",
@@ -1079,7 +1105,14 @@ class RevloApp(App[None]):
                 # Execute tools and build tool_result message
                 tool_results: list[dict] = []
                 for tu in tool_uses:
-                    result = execute_tool(tu.name, tu.input, parsed, specs)
+                    result = execute_tool(
+                        tu.name,
+                        tu.input,
+                        parsed,
+                        specs,
+                        report=self.report,
+                        constraints=self._project_constraints,
+                    )
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tu.id,

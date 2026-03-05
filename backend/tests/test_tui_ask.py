@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from revlo.parser.models import ParsedSchematic
 from revlo.reviewer.models import (
@@ -380,6 +380,30 @@ class TestKeybindingRemap:
             # Chat panel should be mounted
             chat = app.query_one("#chat-panel", ChatPanel)
             assert chat is not None
+            assert app._investigation_target is not None
+
+    @pytest.mark.asyncio
+    async def test_generic_command_clears_investigation_mode_without_leaving_chat(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            await pilot.pause()
+            assert app._chat_mode is True
+            assert app._investigation_target is not None
+
+            chat = app.query_one("#chat-panel", ChatPanel)
+            input_widget = chat.query_one("#chat-input", Input)
+            input_widget.value = "/generic"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app._chat_mode is True
+            assert app._investigation_target is None
+            header = chat.query_one("#chat-header", Static).render().plain
+            assert "Ask Revlo" in header
+            assert "Investigating" not in header
 
     @pytest.mark.asyncio
     async def test_escape_exits_chat_mode(
@@ -669,3 +693,17 @@ class TestFilterBarDisplay:
             center_label = fbar.query_one("#filter-center")
             text = center_label.render().plain
             assert "filter" in text.lower() or "f" in text
+
+    @pytest.mark.asyncio
+    async def test_chat_filter_bar_shows_clear_target_hint(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+        async with app.run_test() as pilot:
+            await pilot.press("a")
+            await pilot.pause()
+            fbar = app.query_one("#filter-bar", FilterBar)
+            right_label = fbar.query_one("#filter-right")
+            text = right_label.render().plain
+            assert "/generic" in text.lower()
+            assert "clear target" in text.lower()
