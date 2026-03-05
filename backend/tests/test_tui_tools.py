@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from revlo.constraints import ConstraintItem, ProjectConstraints
 from revlo.parser.models import (
     ParsedComponent,
     ParsedNet,
     ParsedPin,
     ParsedSchematic,
     PinConnection,
+)
+from revlo.reviewer.models import (
+    DatasheetEvidence,
+    Finding,
+    FindingCategory,
+    FindingEvidence,
+    FindingSourceType,
+    ReviewReport,
+    Severity,
 )
 from revlo.tui.tools import execute_tool
 
@@ -206,6 +216,59 @@ def _make_investigation_schematic() -> ParsedSchematic:
     )
 
 
+def _make_review_report() -> ReviewReport:
+    return ReviewReport(
+        findings=[
+            Finding(
+                severity=Severity.warning,
+                category=FindingCategory.decoupling,
+                component_ref="U1",
+                title="Missing local decoupling",
+                description="U1 has inadequate local decoupling on +3V3.",
+                recommendation="Place a 100nF capacitor close to the VDD pins.",
+                confidence=0.92,
+                source_type=FindingSourceType.deterministic,
+                evidence=FindingEvidence(
+                    refs=["U1", "C1"],
+                    nets=["+3V3"],
+                    sheet_paths=["/MCU", "/Power"],
+                    datasheets=[
+                        DatasheetEvidence(
+                            mpn="STM32F103C8T6",
+                            manufacturer="ST",
+                            relevant_pages=[47],
+                        )
+                    ],
+                    notes=["Observed one capacitor on the rail, but not one per local VDD cluster."],
+                ),
+            )
+        ]
+    )
+
+
+def _make_constraints() -> ProjectConstraints:
+    return ProjectConstraints(
+        schematic="board.kicad_sch",
+        constraints=[
+            ConstraintItem(
+                kind="rail_voltage",
+                name="Main MCU rail",
+                target="+3V3",
+                value="3.3",
+                unit="V",
+                notes="Must stay within MCU operating range.",
+            ),
+            ConstraintItem(
+                kind="placement_rule",
+                name="Local decoupling per MCU rail cluster",
+                target="U1",
+                value="100nF",
+            ),
+        ],
+        source_path="board.revlo-constraints.json",
+    )
+
+
 def test_find_decoupling_caps_reports_caps_on_power_net():
     result = execute_tool(
         "find_decoupling_caps",
@@ -282,3 +345,45 @@ def test_compare_two_refs_summarizes_shared_and_unique_nets():
     assert "Pin counts: U1=8, U3=2" in result
     assert "Shared nets: UART_RX, UART_TX" in result
     assert "Nets only on U1: +3V3, BOOT0, GND, NRST, USB_D+, USB_D-" in result
+
+
+def test_explain_finding_evidence_uses_active_review_context():
+    result = execute_tool(
+        "explain_finding_evidence",
+        {"finding_ref": "U1"},
+        _make_investigation_schematic(),
+        report=_make_review_report(),
+    )
+
+    assert "Evidence for U1: Missing local decoupling" in result
+    assert "Source type: deterministic" in result
+    assert "Refs: U1, C1" in result
+    assert "Nets: +3V3" in result
+    assert "Sheets: /MCU, /Power" in result
+    assert "STM32F103C8T6 | ST | pages 47" in result
+
+
+def test_show_constraint_violations_summarizes_matching_constraints():
+    result = execute_tool(
+        "show_constraint_violations",
+        {"finding_ref": "U1"},
+        _make_investigation_schematic(),
+        report=_make_review_report(),
+        constraints=_make_constraints(),
+    )
+
+    assert "Constraint summary for U1" in result
+    assert "No stored violated constraints are attached to this context yet." in result
+    assert "rail_voltage: Main MCU rail [target=+3V3] -> 3.3 V" in result
+    assert "placement_rule: Local decoupling per MCU rail cluster [target=U1] -> 100nF" in result
+
+
+def test_show_constraint_violations_fails_gracefully_without_constraints():
+    result = execute_tool(
+        "show_constraint_violations",
+        {"finding_ref": "U1"},
+        _make_investigation_schematic(),
+        report=_make_review_report(),
+    )
+
+    assert "No project constraints are loaded" in result

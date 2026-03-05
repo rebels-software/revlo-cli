@@ -7,6 +7,8 @@ from typing import Any
 
 from revlo.datasheet.models import DatasheetSpec
 from revlo.parser.models import ParsedComponent, ParsedNet, ParsedSchematic
+from revlo.constraints import ProjectConstraints
+from revlo.reviewer.models import Finding, ReviewReport
 
 
 SCHEMATIC_TOOLS = [
@@ -227,6 +229,8 @@ def execute_tool(
     args: dict[str, Any],
     schematic: ParsedSchematic,
     specs: dict[str, DatasheetSpec] | None = None,
+    report: ReviewReport | None = None,
+    constraints: ProjectConstraints | None = None,
 ) -> str:
     """Execute a schematic query tool and return a text result."""
     specs = specs or {}
@@ -258,10 +262,14 @@ def execute_tool(
             args.get("ref_b", ""),
             schematic,
         )
-    elif name in {"explain_finding_evidence", "show_constraint_violations"}:
-        return (
-            f"Tool '{name}' requires active review context and is not available "
-            "from the raw schematic graph alone."
+    elif name == "explain_finding_evidence":
+        return _explain_finding_evidence(args.get("finding_ref", ""), report)
+    elif name == "show_constraint_violations":
+        return _show_constraint_violations(
+            report=report,
+            constraints=constraints,
+            ref=args.get("ref"),
+            finding_ref=args.get("finding_ref"),
         )
     return f"Unknown tool: {name}"
 
@@ -771,4 +779,125 @@ def _compare_two_refs(
         f"  Nets only on {component_a.reference}: {', '.join(only_a) if only_a else 'none'}",
         f"  Nets only on {component_b.reference}: {', '.join(only_b) if only_b else 'none'}",
     ]
+    return "\n".join(lines)
+
+
+def _find_report_finding(
+    report: ReviewReport | None,
+    finding_ref: str,
+) -> Finding | None:
+    """Resolve a finding by component ref, title, or combined label."""
+    if report is None:
+        return None
+    needle = finding_ref.strip().lower()
+    if not needle:
+        return report.findings[0] if len(report.findings) == 1 else None
+    for finding in report.findings:
+        candidates = {
+            finding.component_ref.lower(),
+            finding.title.lower(),
+            f"{finding.component_ref}: {finding.title}".lower(),
+        }
+        if needle in candidates:
+            return finding
+    return None
+
+
+def _explain_finding_evidence(
+    finding_ref: str,
+    report: ReviewReport | None,
+) -> str:
+    """Summarize stored structured evidence for a finding."""
+    if report is None:
+        return "No review context is loaded, so finding evidence cannot be explained."
+
+    finding = _find_report_finding(report, finding_ref)
+    if finding is None:
+        return (
+            f"Finding '{finding_ref}' was not found in the active review context."
+            if finding_ref.strip()
+            else "Specify finding_ref when multiple findings are present."
+        )
+
+    evidence = finding.evidence
+    lines = [
+        f"Evidence for {finding.component_ref}: {finding.title}",
+        f"Source type: {finding.source_type.value}",
+    ]
+    if evidence.refs:
+        lines.append(f"Refs: {', '.join(evidence.refs)}")
+    if evidence.nets:
+        lines.append(f"Nets: {', '.join(evidence.nets)}")
+    if evidence.sheet_paths:
+        lines.append(f"Sheets: {', '.join(evidence.sheet_paths)}")
+    if evidence.datasheets:
+        lines.append("Datasheet context:")
+        for datasheet in evidence.datasheets:
+            parts = [datasheet.mpn or "Unknown part"]
+            if datasheet.manufacturer:
+                parts.append(datasheet.manufacturer)
+            if datasheet.relevant_pages:
+                parts.append("pages " + ", ".join(str(page) for page in datasheet.relevant_pages))
+            lines.append(f"  - {' | '.join(parts)}")
+    if evidence.notes:
+        lines.append("Notes:")
+        for note in evidence.notes:
+            lines.append(f"  - {note}")
+    if len(lines) == 2:
+        lines.append("No structured evidence is attached to this finding yet.")
+    return "\n".join(lines)
+
+
+def _show_constraint_violations(
+    *,
+    report: ReviewReport | None,
+    constraints: ProjectConstraints | None,
+    ref: str | None,
+    finding_ref: str | None,
+) -> str:
+    """Summarize matching violated or unverified project constraints."""
+    if constraints is None or not constraints.constraints:
+        return "No project constraints are loaded for this schematic."
+
+    target_refs: set[str] = set()
+    target_nets: set[str] = set()
+    if ref:
+        target_refs.add(ref.strip().upper())
+
+    finding = _find_report_finding(report, finding_ref or "")
+    if finding is not None:
+        target_refs.add(finding.component_ref.upper())
+        target_refs.update(item.upper() for item in finding.evidence.refs)
+        target_nets.update(item.upper() for item in finding.evidence.nets)
+
+    matched = []
+    for constraint in constraints.constraints:
+        target = constraint.target.strip().upper()
+        if not target:
+            continue
+        if target in target_refs or target in target_nets:
+            matched.append(constraint)
+
+    if not matched:
+        return (
+            "No matching project constraints were found for the requested finding or ref."
+        )
+
+    subject = finding.component_ref if finding is not None else (ref or "selection")
+    lines = [
+        f"Constraint summary for {subject}:",
+        "No stored violated constraints are attached to this context yet.",
+        "Matching project constraints that still require verification:",
+    ]
+    for constraint in matched:
+        summary = f"{constraint.kind}: {constraint.name}"
+        if constraint.target:
+            summary += f" [target={constraint.target}]"
+        if constraint.value:
+            summary += f" -> {constraint.value}"
+            if constraint.unit:
+                summary += f" {constraint.unit}"
+        lines.append(f"  - {summary}")
+        if constraint.notes:
+            lines.append(f"    note: {constraint.notes}")
     return "\n".join(lines)

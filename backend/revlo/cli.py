@@ -486,6 +486,7 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
         path,
         review_path=saved_path,
         parsed_schematic=parsed,
+        project_constraints=project_constraints,
         provider=provider,
     )
     app.run()
@@ -700,7 +701,13 @@ def _run_history(args: argparse.Namespace) -> None:
 
         from revlo.tui import RevloApp
 
-        app = RevloApp(data, path, review_path=entry.path, provider=resolve_provider())
+        app = RevloApp(
+            data,
+            path,
+            review_path=entry.path,
+            project_constraints=load_project_constraints(path),
+            provider=resolve_provider(),
+        )
         app.run()
     else:
         # Chat entries fall back to --no-tui display
@@ -750,7 +757,13 @@ def _run_open(args: argparse.Namespace) -> None:
 
     from revlo.tui import RevloApp
 
-    app = RevloApp(report, path, review_path=review_file, provider=resolve_provider())
+    app = RevloApp(
+        report,
+        path,
+        review_path=review_file,
+        project_constraints=load_project_constraints(path),
+        provider=resolve_provider(),
+    )
     app.run()
 
 
