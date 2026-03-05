@@ -7,11 +7,11 @@ import datetime
 import json
 import logging
 import re
-from typing import Any
 
 from revlo.datasheet.models import DatasheetSpec
+from revlo.config import DEFAULT_PROVIDER, resolve_review_model
+from revlo.llm import generate_text
 from revlo.parser.models import ParsedSchematic
-from revlo.config import DEFAULT_MODEL
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.reviewer.models import Finding, ReviewReport
 from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
@@ -20,10 +20,7 @@ from revlo.skills import load_skill
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# JSON extraction helper
-# ---------------------------------------------------------------------------
-def _extract_json_from_response(text: str) -> Any:
+def _extract_json_from_response(text: str) -> object | None:
     """Extract a JSON object or array from an LLM response.
 
     Handles responses that are:
@@ -67,14 +64,13 @@ def _extract_json_from_response(text: str) -> Any:
 async def _review_with_ee_agent(
     chunks: list[ReviewChunk],
     system_prompt: str,
+    provider: str,
     model: str,
 ) -> list[Finding]:
     """Send all chunks to the EE review agent via direct Claude API call.
 
     Returns an empty list on any failure (logged as a warning).
     """
-    import anthropic
-
     # Build a single prompt listing all chunks.
     chunk_sections: list[str] = []
     for idx, chunk in enumerate(chunks, start=1):
@@ -89,17 +85,14 @@ async def _review_with_ee_agent(
         f"{all_chunks_text}"
     )
 
-    client = anthropic.AsyncAnthropic()
-
     try:
-        response = await client.messages.create(
+        text = await generate_text(
+            provider=provider,
             model=model,
-            max_tokens=8192,
-            system=system_prompt,
-            messages=[{"role": "user", "content": prompt}],
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            max_output_tokens=8192,
         )
-
-        text = response.content[0].text
         parsed = _extract_json_from_response(text)
 
         if parsed is None:
@@ -154,21 +147,19 @@ async def _review_with_ee_agent(
 # ---------------------------------------------------------------------------
 async def _review_chunk_generic(
     chunk: ReviewChunk,
+    provider: str,
     model: str,
 ) -> list[Finding]:
     """Review a single chunk using a focused per-chunk prompt (generic fallback)."""
-    import anthropic
-
     prompt = build_review_prompt(chunk)
-    client = anthropic.AsyncAnthropic()
 
     try:
-        response = await client.messages.create(
+        text = await generate_text(
+            provider=provider,
             model=model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
+            user_prompt=prompt,
+            max_output_tokens=4096,
         )
-        text = response.content[0].text
         parsed = _extract_json_from_response(text)
 
         if parsed is None:
@@ -215,6 +206,7 @@ def _build_summary(findings: list[Finding]) -> str:
 
 async def review_schematic(
     schematic: ParsedSchematic,
+    provider: str = DEFAULT_PROVIDER,
     model: str | None = None,
     datasheet_specs: dict[str, DatasheetSpec] | None = None,
     min_confidence: float = 0.5,
@@ -228,7 +220,8 @@ async def review_schematic(
 
     Args:
         schematic: The parsed schematic to review.
-        model: Claude model ID. Defaults to ``DEFAULT_MODEL``.
+        provider: LLM provider to use for the review call.
+        model: Provider-specific model ID. Defaults to the configured review model.
         datasheet_specs: Optional mapping of component reference to
             :class:`DatasheetSpec`. When provided, matching specs are
             injected into each chunk before prompt generation.
@@ -239,6 +232,7 @@ async def review_schematic(
     Malformed responses are logged and skipped -- this function never raises
     due to bad LLM output.
     """
+    resolved_model = resolve_review_model(provider, model)
     chunks = chunk_schematic(schematic)
 
     # Inject datasheet specs into chunks when available.
@@ -264,7 +258,7 @@ async def review_schematic(
 
     # Dispatch ALL chunks to the EE agent in a single call.
     all_findings = await _review_with_ee_agent(
-        chunks, ee_prompt, model or DEFAULT_MODEL
+        chunks, ee_prompt, str(provider), resolved_model
     )
 
     # Fallback: if EE agent produced no findings, try per-chunk generic review.
@@ -273,7 +267,7 @@ async def review_schematic(
             "EE agent returned no findings, falling back to per-chunk generic review"
         )
         chunk_results = await asyncio.gather(
-            *[_review_chunk_generic(chunk, model or DEFAULT_MODEL) for chunk in chunks]
+            *[_review_chunk_generic(chunk, str(provider), resolved_model) for chunk in chunks]
         )
         for chunk_findings in chunk_results:
             all_findings.extend(chunk_findings)

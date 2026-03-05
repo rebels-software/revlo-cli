@@ -1,31 +1,18 @@
-"""Extract structured DatasheetSpec from PDF text using Claude Haiku."""
+"""Extract structured DatasheetSpec from PDF text via the configured LLM provider."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-import anthropic
-
-from revlo.config import MODEL_HAIKU
+from revlo.config import DEFAULT_PROVIDER, resolve_extraction_model
 from revlo.datasheet.models import DatasheetSpec
+from revlo.llm import generate_structured
 
 logger = logging.getLogger(__name__)
 
-_MODEL = MODEL_HAIKU
+_MODEL = resolve_extraction_model(DEFAULT_PROVIDER)
 _MAX_TOKENS = 4096
 _PDF_TEXT_LIMIT = 100_000
-
-# ---------------------------------------------------------------------------
-# Tool-use schema for structured output
-# ---------------------------------------------------------------------------
-_SPEC_TOOL: dict[str, Any] = {
-    "name": "record_datasheet_spec",
-    "description": "Record the structured specifications extracted from the datasheet.",
-    "input_schema": DatasheetSpec.model_json_schema(),
-}
-
-_TOOL_CHOICE: dict[str, str] = {"type": "tool", "name": "record_datasheet_spec"}
 
 # ---------------------------------------------------------------------------
 # System / user prompt
@@ -60,7 +47,13 @@ If a value is not found in the text, omit it or leave it as the default.
 --- END DATASHEET TEXT ---"""
 
 
-async def extract_spec(pdf_text: str, mpn: str) -> DatasheetSpec | None:
+async def extract_spec(
+    pdf_text: str,
+    mpn: str,
+    *,
+    provider: str = DEFAULT_PROVIDER,
+    model: str | None = None,
+) -> DatasheetSpec | None:
     """Extract a structured :class:`DatasheetSpec` from raw PDF text.
 
     Uses Claude Haiku with the tool-use structured-output pattern to
@@ -79,38 +72,20 @@ async def extract_spec(pdf_text: str, mpn: str) -> DatasheetSpec | None:
 
     user_prompt = _USER_PROMPT_TEMPLATE.format(mpn=mpn, pdf_text=truncated)
 
-    client = anthropic.AsyncAnthropic()
-
     try:
-        response = await client.messages.create(
-            model=_MODEL,
-            max_tokens=_MAX_TOKENS,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-            tools=[_SPEC_TOOL],
-            tool_choice=_TOOL_CHOICE,
+        spec = await generate_structured(
+            provider=provider,
+            model=resolve_extraction_model(provider, model),
+            schema_model=DatasheetSpec,
+            system_prompt=_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            max_output_tokens=_MAX_TOKENS,
+            tool_name="record_datasheet_spec",
+            tool_description="Record the structured specifications extracted from the datasheet.",
         )
+        if spec is None:
+            logger.warning("Structured extraction returned no result for MPN %r", mpn)
+        return spec
     except Exception:
         logger.warning("API call failed for MPN %r", mpn, exc_info=True)
-        return None
-
-    # Extract the tool_use block from the response.
-    tool_input: dict[str, Any] | None = None
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            tool_input = block.input
-            break
-
-    if tool_input is None:
-        logger.warning(
-            "No tool_use block in response for MPN %r, skipping", mpn
-        )
-        return None
-
-    try:
-        return DatasheetSpec.model_validate(tool_input)
-    except Exception:
-        logger.warning(
-            "Failed to validate DatasheetSpec for MPN %r", mpn, exc_info=True
-        )
         return None

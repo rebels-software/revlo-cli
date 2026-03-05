@@ -222,8 +222,11 @@ def build_nets_from_netlist(
     nets_by_name: dict[str, ParsedNet] = {}
     unconnected_pins: list[PinConnection] = []
 
-    # Pre-compute refs per net for power classification (done once).
-    _net_refs_cache: dict[str, list[str]] = {}
+    # Pre-compute refs per net once to avoid repeatedly scanning all pin_nets.
+    net_refs_map: dict[str, list[str]] = {}
+    for (ref, _pin), net_name in netlist.pin_nets.items():
+        refs = net_refs_map.setdefault(net_name, [])
+        refs.append(ref)
 
     for comp in all_components:
         for pin in comp.pins:
@@ -239,22 +242,11 @@ def build_nets_from_netlist(
                 continue
 
             if net_name not in nets_by_name:
-                # Collect refs of all pins on this net for power classification.
-                if net_name not in _net_refs_cache:
-                    connected_refs = [
-                        ref
-                        for (ref, _pin), name in netlist.pin_nets.items()
-                        if name == net_name
-                    ]
-                    _net_refs_cache[net_name] = connected_refs
-
                 nets_by_name[net_name] = ParsedNet(
                     name=net_name,
                     pins=[],
                     labels=[],
-                    is_power=_is_power_net(
-                        net_name, _net_refs_cache[net_name]
-                    ),
+                    is_power=_is_power_net(net_name, net_refs_map.get(net_name, [])),
                 )
 
             pin_conn = PinConnection(

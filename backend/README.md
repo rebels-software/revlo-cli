@@ -56,7 +56,7 @@ uv tool install revlo-cli
 ### First Review
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-proj-..."
 revlo review path/to/schematic.kicad_sch
 ```
 
@@ -65,7 +65,7 @@ That's it. Revlo parses the schematic, fetches datasheets, runs the AI review, a
 ## Requirements
 
 - Python 3.11+
-- An `ANTHROPIC_API_KEY` for review and datasheet extraction
+- An `OPENAI_API_KEY` for review and datasheet extraction
 - KiCad schematic in modern `.kicad_sch` format
 
 Optional:

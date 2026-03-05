@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,7 +14,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
-from revlo.config import DEFAULT_MODEL
+from revlo.config import DEFAULT_PROVIDER, LLMProvider, resolve_ask_model, resolve_provider
 from revlo.report.markdown import generate_markdown_report
 from revlo.reviewer.models import Finding, ReviewReport, Severity
 
@@ -412,6 +413,8 @@ class RevloApp(App[None]):
         schematic_path: str,
         review_path: Path | None = None,
         parsed_schematic: object | None = None,
+        provider: str | LLMProvider | None = None,
+        ask_model: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -422,6 +425,8 @@ class RevloApp(App[None]):
         self._sorted_findings = self._sort_findings(report.findings)
         self._chat_panel = None
         self._conversation: list[dict] = []  # API-format messages
+        self._provider = resolve_provider(provider or DEFAULT_PROVIDER)
+        self._ask_model = ask_model or resolve_ask_model(self._provider)
 
     @staticmethod
     def _sort_findings(findings: list[Finding]) -> list[Finding]:
@@ -785,13 +790,10 @@ class RevloApp(App[None]):
         reasoning on complex EE questions.  Thinking blocks are silently
         skipped -- only text and tool_use blocks are surfaced in the UI.
         """
-        import anthropic
-
         from revlo.tui.tools import SCHEMATIC_TOOLS, execute_tool
 
-        # Extended thinking needs a longer timeout (Opus may think for minutes)
+        # Extended thinking needs a longer timeout on longer-running providers.
         timeout = 600.0 if self._thinking_enabled else 120.0
-        client = anthropic.Anthropic(timeout=timeout)
         messages = list(self._conversation)
         full_text = ""
 
@@ -800,96 +802,189 @@ class RevloApp(App[None]):
         tools = SCHEMATIC_TOOLS if parsed is not None else []
         specs = self.report.datasheet_specs or {}
 
-        # Build thinking/temperature kwargs conditionally
-        thinking_kwargs: dict = {}
-        if self._thinking_enabled:
-            thinking_kwargs["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": 10000,
-            }
-        else:
-            thinking_kwargs["thinking"] = {"type": "disabled"}
-
         max_rounds = 10
-        for _ in range(max_rounds):
-            try:
-                response = client.messages.create(
-                    model=DEFAULT_MODEL,
-                    max_tokens=16000,
-                    system=self._system_prompt,
-                    messages=messages,
-                    tools=tools if tools else anthropic.NOT_GIVEN,
-                    **thinking_kwargs,
-                )
-            except Exception as exc:
-                logger.warning("Chat API call failed: %s", exc, exc_info=True)
-                full_text = full_text or f"Error: could not reach Claude. ({exc})"
-                break
+        if self._provider == LLMProvider.openai:
+            from openai import OpenAI
 
-            # Separate text and tool_use blocks; skip thinking blocks
-            text_parts: list[str] = []
-            tool_uses: list = []
-            for block in response.content:
-                if block.type == "thinking":
-                    continue  # extended thinking -- don't show in UI
-                elif block.type == "text":
-                    text_parts.append(block.text)
-                elif block.type == "tool_use":
-                    tool_uses.append(block)
+            client = OpenAI(timeout=timeout)
+            response_id: str | None = None
+            pending_input: list[dict] = list(messages)
+            openai_tools = [
+                {
+                    "type": "function",
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["input_schema"],
+                    "strict": True,
+                }
+                for tool in tools
+            ]
 
-            # If no tool calls, just accumulate text and we're done
-            if not tool_uses:
-                if text_parts:
-                    full_text += "".join(text_parts)
-                    if self._chat_panel is not None:
-                        self.call_from_thread(
-                            self._chat_panel.update_assistant_stream, full_text
-                        )
-                break
+            for _ in range(max_rounds):
+                try:
+                    request_kwargs = {
+                        "model": self._ask_model,
+                        "instructions": self._system_prompt,
+                        "input": pending_input,
+                        "max_output_tokens": 16000,
+                    }
+                    if openai_tools:
+                        request_kwargs["tools"] = openai_tools
+                    if response_id:
+                        request_kwargs["previous_response_id"] = response_id
+                    response = client.responses.create(**request_kwargs)
+                except Exception as exc:
+                    logger.warning("OpenAI chat API call failed: %s", exc, exc_info=True)
+                    full_text = full_text or f"Error: could not reach OpenAI. ({exc})"
+                    break
 
-            # Tool calls: show tool status FIRST, then finalize any
-            # preliminary text into the current bubble before the next round.
-            # This ensures tool lines appear above the final response.
-            if text_parts and self._chat_panel is not None:
-                full_text += "".join(text_parts)
-                self.call_from_thread(
-                    self._chat_panel.update_assistant_stream, full_text
-                )
+                response_id = getattr(response, "id", None)
+                text = getattr(response, "output_text", "") or ""
+                tool_uses = [
+                    item
+                    for item in getattr(response, "output", []) or []
+                    if getattr(item, "type", None) == "function_call"
+                ]
 
-            for tu in tool_uses:
-                status = _tool_status_text(tu.name, tu.input)
-                if self._chat_panel is not None:
+                if not tool_uses:
+                    if text:
+                        full_text += text
+                        if self._chat_panel is not None:
+                            self.call_from_thread(
+                                self._chat_panel.update_assistant_stream, full_text
+                            )
+                    break
+
+                if text and self._chat_panel is not None:
+                    full_text += text
                     self.call_from_thread(
-                        self._chat_panel.show_tool_status, status
+                        self._chat_panel.update_assistant_stream, full_text
                     )
 
-            # Finalize the current bubble and start a fresh one for the
-            # next round's text (after tool results come back).
-            if self._chat_panel is not None:
-                self.call_from_thread(
-                    self._chat_panel.finish_assistant_message, full_text
-                )
-                full_text = ""
-                self.call_from_thread(
-                    self._chat_panel.start_assistant_message, "Thinking..."
-                )
+                for tool_call in tool_uses:
+                    try:
+                        args = json.loads(getattr(tool_call, "arguments", "") or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    status = _tool_status_text(tool_call.name, args)
+                    if self._chat_panel is not None:
+                        self.call_from_thread(self._chat_panel.show_tool_status, status)
 
-            # Build assistant message with all content blocks for the API
-            messages.append({
-                "role": "assistant",
-                "content": [_block_to_dict(b) for b in response.content],
-            })
+                if self._chat_panel is not None:
+                    self.call_from_thread(
+                        self._chat_panel.finish_assistant_message, full_text
+                    )
+                    full_text = ""
+                    self.call_from_thread(
+                        self._chat_panel.start_assistant_message, "Thinking..."
+                    )
 
-            # Execute tools and build tool_result message
-            tool_results: list[dict] = []
-            for tu in tool_uses:
-                result = execute_tool(tu.name, tu.input, parsed, specs)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tu.id,
-                    "content": result,
+                pending_input = []
+                for tool_call in tool_uses:
+                    try:
+                        args = json.loads(getattr(tool_call, "arguments", "") or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    result = execute_tool(tool_call.name, args, parsed, specs)
+                    pending_input.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": tool_call.call_id,
+                            "output": result,
+                        }
+                    )
+        else:
+            import anthropic
+
+            client = anthropic.Anthropic(timeout=timeout)
+            thinking_kwargs: dict = {}
+            if self._thinking_enabled:
+                thinking_kwargs["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": 10000,
+                }
+            else:
+                thinking_kwargs["thinking"] = {"type": "disabled"}
+
+            for _ in range(max_rounds):
+                try:
+                    response = client.messages.create(
+                        model=self._ask_model,
+                        max_tokens=16000,
+                        system=self._system_prompt,
+                        messages=messages,
+                        tools=tools if tools else anthropic.NOT_GIVEN,
+                        **thinking_kwargs,
+                    )
+                except Exception as exc:
+                    logger.warning("Chat API call failed: %s", exc, exc_info=True)
+                    full_text = full_text or f"Error: could not reach Claude. ({exc})"
+                    break
+
+                # Separate text and tool_use blocks; skip thinking blocks
+                text_parts: list[str] = []
+                tool_uses: list = []
+                for block in response.content:
+                    if block.type == "thinking":
+                        continue  # extended thinking -- don't show in UI
+                    elif block.type == "text":
+                        text_parts.append(block.text)
+                    elif block.type == "tool_use":
+                        tool_uses.append(block)
+
+                # If no tool calls, just accumulate text and we're done
+                if not tool_uses:
+                    if text_parts:
+                        full_text += "".join(text_parts)
+                        if self._chat_panel is not None:
+                            self.call_from_thread(
+                                self._chat_panel.update_assistant_stream, full_text
+                            )
+                    break
+
+                # Tool calls: show tool status FIRST, then finalize any
+                # preliminary text into the current bubble before the next round.
+                # This ensures tool lines appear above the final response.
+                if text_parts and self._chat_panel is not None:
+                    full_text += "".join(text_parts)
+                    self.call_from_thread(
+                        self._chat_panel.update_assistant_stream, full_text
+                    )
+
+                for tu in tool_uses:
+                    status = _tool_status_text(tu.name, tu.input)
+                    if self._chat_panel is not None:
+                        self.call_from_thread(
+                            self._chat_panel.show_tool_status, status
+                        )
+
+                # Finalize the current bubble and start a fresh one for the
+                # next round's text (after tool results come back).
+                if self._chat_panel is not None:
+                    self.call_from_thread(
+                        self._chat_panel.finish_assistant_message, full_text
+                    )
+                    full_text = ""
+                    self.call_from_thread(
+                        self._chat_panel.start_assistant_message, "Thinking..."
+                    )
+
+                # Build assistant message with all content blocks for the API
+                messages.append({
+                    "role": "assistant",
+                    "content": [_block_to_dict(b) for b in response.content],
                 })
-            messages.append({"role": "user", "content": tool_results})
+
+                # Execute tools and build tool_result message
+                tool_results: list[dict] = []
+                for tu in tool_uses:
+                    result = execute_tool(tu.name, tu.input, parsed, specs)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tu.id,
+                        "content": result,
+                    })
+                messages.append({"role": "user", "content": tool_results})
 
         # Finalize the message
         if self._chat_panel is not None:

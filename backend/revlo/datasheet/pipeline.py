@@ -13,6 +13,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+from revlo.config import DEFAULT_PROVIDER, resolve_datasheet_concurrency
 from revlo.datasheet.cache import DatasheetCache
 from revlo.datasheet.extractor import extract_spec
 from revlo.datasheet.models import DatasheetCacheEntry, DatasheetSpec, NormalizedPartNumber
@@ -64,6 +65,7 @@ async def _process_component(
     part: NormalizedPartNumber,
     cache: DatasheetCache,
     cache_dir: Path,
+    provider: str = DEFAULT_PROVIDER,
     error_callback: Callable[[str, str], None] | None = None,
     status_callback: Callable[[str, str, str], None] | None = None,
 ) -> DatasheetSpec | None:
@@ -136,7 +138,7 @@ async def _process_component(
 
     # 6. Extract structured spec via Claude.
     logger.info("[%s] Extracting spec via Claude ...", ref)
-    spec = await extract_spec(pdf_text, mpn)
+    spec = await extract_spec(pdf_text, mpn, provider=provider)
     if spec is None:
         logger.warning("[%s] Spec extraction failed for %s", ref, mpn)
         return None
@@ -162,6 +164,7 @@ async def _process_component(
 async def enrich_schematic(
     parsed: ParsedSchematic,
     cache_dir: Path,
+    provider: str = DEFAULT_PROVIDER,
     progress_callback: Callable[[int, int], None] | None = None,
     error_callback: Callable[[str, str], None] | None = None,
     status_callback: Callable[[str, str, str], None] | None = None,
@@ -219,6 +222,8 @@ async def enrich_schematic(
     if progress_callback is not None:
         progress_callback(0, _total)
 
+    semaphore = asyncio.Semaphore(resolve_datasheet_concurrency())
+
     # Process non-generic parts concurrently.
     async def _safe_process(
         comp: ParsedComponent, part: NormalizedPartNumber
@@ -226,7 +231,16 @@ async def enrich_schematic(
         """Wrapper that catches all exceptions for graceful degradation."""
         nonlocal _completed
         try:
-            spec = await _process_component(comp, part, cache, cache_dir, error_callback, status_callback)
+            async with semaphore:
+                spec = await _process_component(
+                    comp,
+                    part,
+                    cache,
+                    cache_dir,
+                    provider=provider,
+                    error_callback=error_callback,
+                    status_callback=status_callback,
+                )
             return (comp.reference, spec)
         except Exception:
             logger.warning(

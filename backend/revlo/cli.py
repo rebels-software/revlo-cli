@@ -14,9 +14,10 @@ from rich.progress import Progress, TextColumn
 from rich.status import Status
 
 from revlo import __version__
+from revlo.config import DEFAULT_PROVIDER, resolve_review_model
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
-from revlo.reviewer import MODEL_OPUS, MODEL_SONNET, review_schematic
+from revlo.reviewer import review_schematic
 from revlo.ui import (
     AMBER,
     GRADIENT_LOOP,
@@ -72,9 +73,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     review.add_argument(
         "--model",
-        choices=["sonnet", "opus"],
         default=None,
-        help="Claude model to use for review (default: sonnet via env/fallback)",
+        help="OpenAI model ID override for review (default: gpt-5.4)",
     )
     review.add_argument(
         "--skip-datasheet",
@@ -161,10 +161,11 @@ def _run_review(args: argparse.Namespace) -> None:
         print(f"Error: file not found: {path}", file=sys.stderr)
         sys.exit(1)
 
-    # Validate API key
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    provider = DEFAULT_PROVIDER
+
+    if not os.environ.get("OPENAI_API_KEY"):
         print(
-            "Error: ANTHROPIC_API_KEY environment variable is not set",
+            "Error: OPENAI_API_KEY environment variable is not set",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -255,6 +256,7 @@ def _run_review(args: argparse.Namespace) -> None:
                         enrich_schematic(
                             parsed,
                             cache_dir,
+                            provider=provider,
                             progress_callback=_on_progress,
                             error_callback=_on_error,
                             status_callback=_on_status,
@@ -277,7 +279,7 @@ def _run_review(args: argparse.Namespace) -> None:
                 )
             else:
                 datasheet_specs = asyncio.run(
-                    enrich_schematic(parsed, cache_dir)
+                    enrich_schematic(parsed, cache_dir, provider=provider)
                 )
         except Exception as exc:
             logger.warning(
@@ -286,9 +288,7 @@ def _run_review(args: argparse.Namespace) -> None:
             if show_rich:
                 print_error(console, f"Datasheet enrichment failed: {exc}")
 
-    # Resolve model choice
-    _model_map = {"sonnet": MODEL_SONNET, "opus": MODEL_OPUS}
-    model: str | None = _model_map[args.model] if args.model else None
+    model = resolve_review_model(override=args.model)
 
     # Run review
     try:
@@ -301,6 +301,7 @@ def _run_review(args: argparse.Namespace) -> None:
                 report = asyncio.run(
                     review_schematic(
                         parsed,
+                        provider=provider,
                         model=model,
                         datasheet_specs=datasheet_specs,
                         min_confidence=args.min_confidence,
@@ -310,6 +311,7 @@ def _run_review(args: argparse.Namespace) -> None:
             report = asyncio.run(
                 review_schematic(
                     parsed,
+                    provider=provider,
                     model=model,
                     datasheet_specs=datasheet_specs,
                     min_confidence=args.min_confidence,
@@ -371,7 +373,12 @@ def _run_review(args: argparse.Namespace) -> None:
 
     from revlo.tui import RevloApp
 
-    app = RevloApp(report, path, review_path=saved_path, parsed_schematic=parsed)
+    app = RevloApp(
+        report,
+        path,
+        review_path=saved_path,
+        parsed_schematic=parsed,
+    )
     app.run()
 
 
