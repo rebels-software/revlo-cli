@@ -140,6 +140,12 @@ def test_build_parser_with_profile_flag():
     assert args.profile == "generic"
 
 
+def test_build_parser_with_compare_to_flag():
+    parser = _build_parser()
+    args = parser.parse_args(["review", "test.kicad_sch", "--compare-to", "old.kicad_sch"])
+    assert args.compare_to == "old.kicad_sch"
+
+
 def test_build_parser_with_constraints_flag():
     parser = _build_parser()
     args = parser.parse_args(
@@ -722,6 +728,8 @@ def test_run_review_auto_saves(
 
 @patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
+@patch("revlo.cli.tag_change_driven_findings")
+@patch("revlo.cli.compare_schematic_paths")
 @patch("revlo.cli.load_bom")
 @patch("revlo.cli.load_project_constraints")
 @patch("revlo.cli.parse_schematic")
@@ -732,6 +740,8 @@ def test_run_review_threads_loaded_constraints(
     mock_parse: MagicMock,
     mock_load_constraints: MagicMock,
     mock_load_bom: MagicMock,
+    mock_compare: MagicMock,
+    mock_tag_change: MagicMock,
     mock_save: MagicMock,
     mock_netlist: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
@@ -741,16 +751,27 @@ def test_run_review_threads_loaded_constraints(
     mock_parse.return_value = mock_parsed_schematic
     mock_load_constraints.return_value = SimpleNamespace(constraints=[])
     mock_load_bom.return_value = None
+    mock_compare.return_value = MagicMock()
 
     with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
         mock_asyncio_run.return_value = mock_review_report
         args = _build_parser().parse_args(
-            ["review", fixture_path, "--constraints", "constraints.json", "--no-tui"]
+            [
+                "review",
+                fixture_path,
+                "--constraints",
+                "constraints.json",
+                "--compare-to",
+                "old.kicad_sch",
+                "--no-tui",
+            ]
         )
         _run_review(args)
 
     mock_load_bom.assert_called_once_with(fixture_path, None)
     mock_load_constraints.assert_called_once_with(fixture_path, "constraints.json")
+    mock_compare.assert_called_once_with("old.kicad_sch", fixture_path)
+    mock_tag_change.assert_called_once()
     assert mock_review.call_args.kwargs["project_constraints"].constraints == []
 
 

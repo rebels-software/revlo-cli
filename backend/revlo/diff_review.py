@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, computed_field
 
 from revlo.parser import parse_schematic
 from revlo.parser.models import ParsedComponent, ParsedNet, ParsedSchematic
+from revlo.reviewer.models import FindingChangeStatus, ReviewReport
 
 
 class ChangedComponent(BaseModel):
@@ -191,3 +192,26 @@ def _pin_set(net: ParsedNet) -> set[str]:
         f"{pin.component_ref}:{pin.pin_number}:{pin.pin_name}"
         for pin in net.pins
     }
+
+
+def tag_change_driven_findings(
+    report: ReviewReport,
+    diff: SchematicDiffSummary,
+) -> ReviewReport:
+    """Tag findings whose refs or nets intersect with schematic changes."""
+    changed_refs = set(diff.added_components)
+    changed_refs.update(diff.removed_components)
+    changed_refs.update(change.reference for change in diff.changed_components)
+
+    changed_nets = set(diff.added_nets)
+    changed_nets.update(diff.removed_nets)
+    changed_nets.update(change.name for change in diff.changed_nets)
+
+    for finding in report.findings:
+        refs = {finding.component_ref, *finding.evidence.refs}
+        nets = set(finding.evidence.nets)
+        if refs & changed_refs or nets & changed_nets:
+            finding.change_status = FindingChangeStatus.change_driven
+        else:
+            finding.change_status = FindingChangeStatus.unchanged_context
+    return report

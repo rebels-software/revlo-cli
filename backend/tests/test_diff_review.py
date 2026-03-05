@@ -4,13 +4,24 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from revlo.diff_review import compare_schematic_paths, compare_schematics
+from revlo.diff_review import (
+    compare_schematic_paths,
+    compare_schematics,
+    tag_change_driven_findings,
+)
 from revlo.parser.models import (
     ParsedComponent,
     ParsedNet,
     ParsedSchematic,
     PinConnection,
     TitleBlockInfo,
+)
+from revlo.reviewer.models import (
+    Finding,
+    FindingCategory,
+    FindingEvidence,
+    ReviewReport,
+    Severity,
 )
 
 
@@ -138,3 +149,49 @@ def test_compare_schematic_paths_parses_both_inputs():
     assert mock_parse.call_count == 2
     assert diff.before_name == "old.kicad_sch"
     assert diff.after_name == "new.kicad_sch"
+
+
+def test_tag_change_driven_findings_marks_changed_context():
+    report = ReviewReport(
+        findings=[
+            Finding(
+                severity=Severity.warning,
+                category=FindingCategory.power,
+                component_ref="U1",
+                title="Changed rail issue",
+                description="...",
+                recommendation="...",
+                confidence=0.9,
+                evidence=FindingEvidence(refs=["U1"], nets=["3V3"]),
+            ),
+            Finding(
+                severity=Severity.warning,
+                category=FindingCategory.power,
+                component_ref="U9",
+                title="Old issue",
+                description="...",
+                recommendation="...",
+                confidence=0.9,
+            ),
+        ]
+    )
+    diff = compare_schematics(
+        ParsedSchematic(
+            components=[_make_component("U1", value="Old")],
+            nets=[_make_net("3V3")],
+        ),
+        ParsedSchematic(
+            components=[_make_component("U1", value="New")],
+            nets=[
+                _make_net(
+                    "3V3",
+                    pins=[PinConnection(component_ref="U1", pin_number="1", pin_name="VDD")],
+                )
+            ],
+        ),
+    )
+
+    tagged = tag_change_driven_findings(report, diff)
+
+    assert tagged.findings[0].change_status == "change_driven"
+    assert tagged.findings[1].change_status == "unchanged_context"

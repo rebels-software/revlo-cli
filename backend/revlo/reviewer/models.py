@@ -45,6 +45,12 @@ class FindingBaselineStatus(StrEnum):
     waived = "waived"
 
 
+class FindingChangeStatus(StrEnum):
+    not_compared = "not_compared"
+    unchanged_context = "unchanged_context"
+    change_driven = "change_driven"
+
+
 class DatasheetEvidence(BaseModel):
     mpn: str = ""
     manufacturer: str = ""
@@ -71,6 +77,7 @@ class Finding(BaseModel):
     suggested_fix: str = ""
     source_type: FindingSourceType = FindingSourceType.llm
     baseline_status: FindingBaselineStatus = FindingBaselineStatus.unclassified
+    change_status: FindingChangeStatus = FindingChangeStatus.not_compared
     evidence: FindingEvidence = Field(default_factory=FindingEvidence)
 
 

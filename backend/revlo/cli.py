@@ -22,6 +22,7 @@ from revlo.config import (
     resolve_provider,
     resolve_review_model,
 )
+from revlo.diff_review import compare_schematic_paths, tag_change_driven_findings
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
 from revlo.review_state import classify_findings, finding_fingerprint, load_baseline
@@ -103,6 +104,11 @@ def _add_review_args(parser: argparse.ArgumentParser) -> None:
         "--bom",
         default=None,
         help="Path to a project BOM CSV file (default: <schematic>.revlo-bom.csv)",
+    )
+    parser.add_argument(
+        "--compare-to",
+        default=None,
+        help="Path to an earlier schematic revision for diff-aware review tagging",
     )
 
 
@@ -435,6 +441,13 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
     report.datasheet_mode = "full" if datasheet_enabled else "fast"
     report.review_profile = review_profile
     classify_findings(report, path)
+    if args.compare_to:
+        try:
+            diff_summary = compare_schematic_paths(args.compare_to, path)
+        except Exception as exc:
+            print(f"Error: failed to compare schematics: {exc}", file=sys.stderr)
+            sys.exit(1)
+        tag_change_driven_findings(report, diff_summary)
 
     # Auto-save review
     from revlo.storage import save_review
