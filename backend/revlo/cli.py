@@ -16,6 +16,7 @@ from rich.status import Status
 from revlo import __version__
 from revlo.bom import load_bom
 from revlo.constraints import load_project_constraints
+from revlo.rule_packs import load_rule_packs
 from revlo.config import (
     required_api_key_env,
     resolve_review_profile,
@@ -25,6 +26,7 @@ from revlo.config import (
 from revlo.diff_review import compare_schematic_paths, tag_change_driven_findings
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
+from revlo.report.signoff import generate_signoff_report
 from revlo.review_state import classify_findings, finding_fingerprint, load_baseline
 from revlo.reviewer import review_schematic
 from revlo.reviewer.models import Finding, FindingCategory, ReviewReport, Severity
@@ -110,6 +112,19 @@ def _add_review_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Path to an earlier schematic revision for diff-aware review tagging",
     )
+    parser.add_argument(
+        "--rule-packs",
+        nargs="*",
+        default=None,
+        dest="rule_packs",
+        help="Paths to custom rule-pack JSON files (default: auto-detect sidecar files)",
+    )
+    parser.add_argument(
+        "--signoff",
+        metavar="FILE",
+        default=None,
+        help="Export a sign-off review packet to FILE (markdown)",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -164,6 +179,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=[category.value for category in FindingCategory],
         dest="fail_categories",
         help="Fail when findings from this category are present. Can be repeated.",
+    )
+    check.add_argument(
+        "--policy-json",
+        action="store_true",
+        dest="policy_json",
+        help="Emit versioned JSON policy output (schema_version 1) for CI/automation",
     )
     check.add_argument(
         "--scope",
@@ -308,6 +329,20 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
             f"Loaded {len(project_constraints.constraints)} project constraints",
         )
 
+    # Load custom rule packs (auto-detect sidecar or explicit --rule-packs)
+    try:
+        custom_rule_packs = load_rule_packs(path, args.rule_packs)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if show_rich and custom_rule_packs:
+        total_rules = sum(len(pack.rules) for pack in custom_rule_packs)
+        print_step(
+            console,
+            f"Loaded {len(custom_rule_packs)} rule pack(s) with {total_rules} custom rules",
+        )
+
     # Datasheet enrichment (full review only)
     datasheet_specs = None
     if datasheet_enabled:
@@ -395,6 +430,7 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
     model = resolve_review_model(provider, override=args.model)
 
     # Run review
+    _custom_packs = custom_rule_packs or None
     try:
         if show_rich:
             with Status(
@@ -412,6 +448,7 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
                         review_profile=review_profile,
                         bom=bom,
                         project_constraints=project_constraints,
+                        custom_rule_packs=_custom_packs,
                     )
                 )
         else:
@@ -425,6 +462,7 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
                     review_profile=review_profile,
                     bom=bom,
                     project_constraints=project_constraints,
+                    custom_rule_packs=_custom_packs,
                 )
             )
     except Exception as exc:
@@ -459,6 +497,22 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
         except ValueError:
             display_path = saved_path
         print_step(console, f"Review saved to {display_path}")
+
+    # -- sign-off report export --
+    signoff_path = getattr(args, "signoff", None)
+    if signoff_path:
+        signoff_md = generate_signoff_report(report, path)
+        try:
+            with open(signoff_path, "w") as fh:
+                fh.write(signoff_md)
+        except OSError as exc:
+            print(
+                f"Error: could not write sign-off report to {signoff_path}: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if show_rich:
+            print_step(console, f"Sign-off packet written to {signoff_path}")
 
     # -- file / JSON output modes (highest priority) --
     if args.json_output or args.output:
@@ -591,6 +645,25 @@ def _run_check(args: argparse.Namespace) -> None:
     """Execute the non-interactive check subcommand."""
     args.no_tui = True
     report = _run_review(args)
+
+    # Emit versioned policy JSON when requested.
+    if getattr(args, "policy_json", False):
+        from revlo.policy_output import build_policy_json
+
+        output = build_policy_json(report, args.path)
+        if args.output:
+            try:
+                with open(args.output, "w") as fh:
+                    fh.write(output)
+            except OSError as exc:
+                print(
+                    f"Error: could not write to {args.output}: {exc}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        else:
+            print(output)
+
     findings, scope_message = _check_scope_findings(report, args.path, args.scope)
     failure_message = _check_failure_message(
         findings,
