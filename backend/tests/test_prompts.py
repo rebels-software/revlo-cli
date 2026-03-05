@@ -105,6 +105,12 @@ class TestDispatcher:
         assert isinstance(build_review_prompt(ic_chunk), str)
         assert isinstance(build_review_prompt(power_chunk), str)
 
+    def test_profile_specific_prompt_framing_is_included(self, ic_chunk):
+        prompt = build_review_prompt(ic_chunk, review_profile="sensor-node")
+        assert "## Active Review Profile" in prompt
+        assert "Sensor Node" in prompt
+        assert "low-power operation" in prompt
+
     def test_unknown_type_raises(self):
         bad = ReviewChunk(chunk_type="unknown", label="X")
         with pytest.raises(ValueError, match="Unknown chunk type"):

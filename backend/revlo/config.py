@@ -9,6 +9,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from revlo.review_profiles import list_review_profile_names
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,7 +43,6 @@ DEFAULT_ANTHROPIC_ASK_MODEL = MODEL_OPUS
 
 DEFAULT_DATASHEET_CONCURRENCY = 4
 DEFAULT_REVIEW_PROFILE = "generic"
-_VALID_REVIEW_PROFILES = {DEFAULT_REVIEW_PROFILE}
 
 
 def _resolve_config_path() -> Path | None:
@@ -238,8 +239,9 @@ def resolve_review_profile(override: str | None = None) -> str:
         or DEFAULT_REVIEW_PROFILE
     )
     value = str(raw).strip().lower()
-    if value not in _VALID_REVIEW_PROFILES:
-        valid = ", ".join(sorted(_VALID_REVIEW_PROFILES))
+    valid_profiles = set(list_review_profile_names())
+    if value not in valid_profiles:
+        valid = ", ".join(sorted(valid_profiles))
         raise ValueError(
             f"Unknown review profile '{value}'. Valid profiles: {valid}"
         )

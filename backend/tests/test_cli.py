@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -738,7 +739,7 @@ def test_run_review_threads_loaded_constraints(
     fixture_path: str,
 ):
     mock_parse.return_value = mock_parsed_schematic
-    mock_load_constraints.return_value = {"constraints": []}
+    mock_load_constraints.return_value = SimpleNamespace(constraints=[])
     mock_load_bom.return_value = None
 
     with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
@@ -750,13 +751,13 @@ def test_run_review_threads_loaded_constraints(
 
     mock_load_bom.assert_called_once_with(fixture_path, None)
     mock_load_constraints.assert_called_once_with(fixture_path, "constraints.json")
-    assert mock_review.call_args.kwargs["project_constraints"] == {"constraints": []}
+    assert mock_review.call_args.kwargs["project_constraints"].constraints == []
 
 
 def test_run_review_invalid_profile_exits(fixture_path: str):
     with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
         args = _build_parser().parse_args(
-            ["review", fixture_path, "--profile", "sensor-node"]
+            ["review", fixture_path, "--profile", "lab-rig"]
         )
         with pytest.raises(SystemExit) as exc:
             _run_review(args)

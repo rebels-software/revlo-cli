@@ -216,7 +216,7 @@ class TestReviewSchematic:
         """EE agent returns no findings and fallback also empty produces empty report."""
         schematic = _make_schematic()
 
-        async def _mock_chunk_generic(chunk, provider, model):
+        async def _mock_chunk_generic(chunk, provider, model, review_profile):
             return []
 
         with patch(
@@ -517,7 +517,7 @@ class TestBoundedBatchReview:
                 return [Finding(**_valid_finding_dict(component_ref="U1"))]
             return []
 
-        async def _mock_chunk_generic(chunk, provider, model):
+        async def _mock_chunk_generic(chunk, provider, model, review_profile):
             fallback_chunks.append(chunk.label)
             return [
                 Finding(

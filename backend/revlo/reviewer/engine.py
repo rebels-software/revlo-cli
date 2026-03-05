@@ -10,10 +10,11 @@ import os
 import re
 
 from revlo.datasheet.models import DatasheetSpec
-from revlo.config import DEFAULT_PROVIDER, resolve_review_model
+from revlo.config import DEFAULT_PROVIDER, DEFAULT_REVIEW_PROFILE, resolve_review_model
 from revlo.constraints import ProjectConstraints
 from revlo.llm import generate_text
 from revlo.parser.models import ParsedSchematic
+from revlo.review_profiles import get_review_profile_definition
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.reviewer.models import Finding, ReviewReport
 from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
@@ -154,9 +155,10 @@ async def _review_chunk_generic(
     chunk: ReviewChunk,
     provider: str,
     model: str,
+    review_profile: str,
 ) -> list[Finding]:
     """Review a single chunk using a focused per-chunk prompt (generic fallback)."""
-    prompt = build_review_prompt(chunk)
+    prompt = build_review_prompt(chunk, review_profile=review_profile)
 
     try:
         text = await generate_text(
@@ -222,6 +224,7 @@ async def _review_chunk_batch(
     system_prompt: str,
     provider: str,
     model: str,
+    review_profile: str,
     batch_index: int,
     total_batches: int,
 ) -> list[Finding]:
@@ -236,7 +239,15 @@ async def _review_chunk_batch(
         total_batches,
     )
     chunk_results = await asyncio.gather(
-        *[_review_chunk_generic(chunk, provider, model) for chunk in chunks]
+        *[
+            _review_chunk_generic(
+                chunk,
+                provider,
+                model,
+                review_profile,
+            )
+            for chunk in chunks
+        ]
     )
     flattened: list[Finding] = []
     for chunk_findings in chunk_results:
@@ -256,12 +267,38 @@ def _build_summary(findings: list[Finding]) -> str:
     )
 
 
+def _apply_review_profile_to_system_prompt(
+    system_prompt: str,
+    review_profile: str,
+) -> str:
+    """Append shared profile framing to the main EE system prompt."""
+    profile = get_review_profile_definition(review_profile)
+    sections = [
+        system_prompt,
+        "## Active Review Profile",
+        f"Name: {profile.display_name} ({profile.name})",
+        f"Focus: {profile.prompt_preamble}",
+    ]
+    if profile.enabled_rule_sets:
+        sections.append(
+            f"Enabled rule sets: {', '.join(profile.enabled_rule_sets)}"
+        )
+    if profile.severity_weighting:
+        weights = ", ".join(
+            f"{category}={weight}"
+            for category, weight in sorted(profile.severity_weighting.items())
+        )
+        sections.append(f"Severity weighting: {weights}")
+    return "\n\n".join(sections)
+
+
 async def review_schematic(
     schematic: ParsedSchematic,
     provider: str = DEFAULT_PROVIDER,
     model: str | None = None,
     datasheet_specs: dict[str, DatasheetSpec] | None = None,
     min_confidence: float = 0.5,
+    review_profile: str = DEFAULT_REVIEW_PROFILE,
     enable_deterministic_checks: bool | None = None,
     project_constraints: ProjectConstraints | None = None,
 ) -> ReviewReport:
@@ -319,10 +356,14 @@ async def review_schematic(
             schematic_title=schematic.title_block.title,
             review_date=datetime.date.today().isoformat(),
             datasheet_specs=datasheet_specs or {},
+            review_profile=review_profile,
         )
 
     # Load the comprehensive EE system prompt.
-    ee_prompt = load_skill("ee_review")
+    ee_prompt = _apply_review_profile_to_system_prompt(
+        load_skill("ee_review"),
+        review_profile,
+    )
 
     batch_size = _resolve_review_batch_size()
     chunk_batches = _split_review_batches(chunks, batch_size)
@@ -341,6 +382,7 @@ async def review_schematic(
                 ee_prompt,
                 str(provider),
                 resolved_model,
+                review_profile,
                 batch_index=index,
                 total_batches=len(chunk_batches),
             )
@@ -359,4 +401,5 @@ async def review_schematic(
         schematic_title=schematic.title_block.title,
         review_date=datetime.date.today().isoformat(),
         datasheet_specs=datasheet_specs or {},
+        review_profile=review_profile,
     )

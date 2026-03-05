@@ -10,6 +10,7 @@ import json
 
 from revlo.reviewer.chunker import ReviewChunk
 from revlo.reviewer.models import Finding
+from revlo.review_profiles import get_review_profile_definition
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +256,32 @@ _BUILDERS: dict[str, object] = {
 }
 
 
-def build_review_prompt(chunk: ReviewChunk) -> str:
+def _profile_instructions(review_profile: str) -> str:
+    """Return shared prompt framing for the active review profile."""
+    profile = get_review_profile_definition(review_profile)
+    lines = [
+        "## Active Review Profile",
+        f"- Name: {profile.display_name} ({profile.name})",
+    ]
+    if profile.prompt_preamble:
+        lines.append(f"- Focus: {profile.prompt_preamble}")
+    if profile.enabled_rule_sets:
+        lines.append(
+            f"- Enabled rule sets: {', '.join(profile.enabled_rule_sets)}"
+        )
+    if profile.severity_weighting:
+        weights = ", ".join(
+            f"{category}={weight}"
+            for category, weight in sorted(profile.severity_weighting.items())
+        )
+        lines.append(f"- Severity weighting: {weights}")
+    return "\n".join(lines)
+
+
+def build_review_prompt(
+    chunk: ReviewChunk,
+    review_profile: str = "generic",
+) -> str:
     """Build a review prompt for the given ReviewChunk.
 
     Dispatches to the appropriate builder based on ``chunk.chunk_type``.
@@ -269,4 +295,5 @@ def build_review_prompt(chunk: ReviewChunk) -> str:
             f"Unknown chunk type: {chunk.chunk_type!r}. "
             f"Expected one of: {sorted(_BUILDERS)}"
         )
-    return builder(chunk)  # type: ignore[operator]
+    prompt = builder(chunk)  # type: ignore[operator]
+    return f"{_profile_instructions(review_profile)}\n\n{prompt}"
