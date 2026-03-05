@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -60,6 +61,28 @@ _FILTER_NAMES: dict[str, str] = {
     "warnings": "Warnings",
     "suggestions": "Suggestions",
 }
+
+
+@dataclass(slots=True)
+class InvestigationTarget:
+    """Structured Ask Mode context for investigating one finding."""
+
+    severity: str
+    title: str
+    component_ref: str
+    refs: list[str] = field(default_factory=list)
+    nets: list[str] = field(default_factory=list)
+    recommendation: str = ""
+
+    def to_banner_text(self) -> str:
+        parts = [f"[{self.severity.upper()}] {self.component_ref}: {self.title}"]
+        if self.refs:
+            parts.append(f"refs={', '.join(self.refs)}")
+        if self.nets:
+            parts.append(f"nets={', '.join(self.nets)}")
+        if self.recommendation:
+            parts.append(f"recommendation={self.recommendation}")
+        return " | ".join(parts)
 
 
 
@@ -426,6 +449,7 @@ class RevloApp(App[None]):
         self._sorted_findings = self._sort_findings(report.findings)
         self._chat_panel = None
         self._conversation: list[dict] = []  # API-format messages
+        self._investigation_target: InvestigationTarget | None = None
         self._provider = resolve_provider(provider or DEFAULT_PROVIDER)
         self._ask_model = ask_model or resolve_ask_model(self._provider)
 
@@ -601,6 +625,22 @@ class RevloApp(App[None]):
             pass
         return None
 
+    def _build_investigation_target(
+        self, finding: Finding | None
+    ) -> InvestigationTarget | None:
+        """Build structured Ask Mode investigation context from a finding."""
+        if finding is None:
+            return None
+        refs = list(dict.fromkeys([finding.component_ref, *finding.evidence.refs]))
+        return InvestigationTarget(
+            severity=finding.severity.value,
+            title=finding.title,
+            component_ref=finding.component_ref,
+            refs=refs,
+            nets=list(finding.evidence.nets),
+            recommendation=finding.recommendation,
+        )
+
     def _update_chat_header(self) -> None:
         """Update the chat panel header to reflect the thinking toggle state."""
         if self._chat_panel is None:
@@ -614,8 +654,13 @@ class RevloApp(App[None]):
             if self._thinking_enabled
             else f"[{MUTED_GRAY}]Thinking: OFF[/]"
         )
+        mode_label = (
+            f"[bold {WARM_AMBER}]Investigating {self._investigation_target.component_ref}[/]"
+            if self._investigation_target is not None
+            else f"[bold {ELECTRIC_TEAL}]Ask Revlo[/]"
+        )
         header.update(
-            f"[bold {ELECTRIC_TEAL}]Ask Revlo[/]  {state_tag}"
+            f"{mode_label}  {state_tag}"
             f"  [{MUTED_GRAY}]Press Escape to return.[/]"
         )
 
@@ -670,11 +715,9 @@ class RevloApp(App[None]):
         # Build initial context from highlighted finding
         initial_context = ""
         finding = self._get_highlighted_finding()
-        if finding is not None:
-            initial_context = (
-                f"[{finding.severity.value.upper()}] {finding.component_ref}: "
-                f"{finding.title} -- {finding.description}"
-            )
+        self._investigation_target = self._build_investigation_target(finding)
+        if self._investigation_target is not None:
+            initial_context = self._investigation_target.to_banner_text()
 
         # Create and mount chat panel into main-container
         try:
@@ -732,6 +775,7 @@ class RevloApp(App[None]):
 
         # Clear conversation history for next session
         self._conversation = []
+        self._investigation_target = None
 
         # Restore filter bar to normal mode
         self._restore_filter_bar()
@@ -1081,4 +1125,21 @@ def _tool_status_text(name: str, args: dict) -> str:
         return f"Finding unconnected pins{' on ' + ref if ref else ''}..."
     elif name == "list_power_rails":
         return "Listing power rails..."
+    elif name == "find_decoupling_caps":
+        return f"Looking for decoupling caps near {args.get('ref', '?')}..."
+    elif name == "trace_power_tree":
+        return f"Tracing power tree for {args.get('net_name', '?')}..."
+    elif name == "find_reset_chain":
+        target = args.get("ref") or args.get("net_name", "?")
+        return f"Tracing reset chain for {target}..."
+    elif name == "find_boot_straps":
+        return f"Inspecting boot straps on {args.get('ref', '?')}..."
+    elif name == "find_interface_bundle":
+        return f"Finding {args.get('interface_type', '?')} interface bundle..."
+    elif name == "compare_two_refs":
+        return f"Comparing {args.get('ref_a', '?')} vs {args.get('ref_b', '?')}..."
+    elif name == "explain_finding_evidence":
+        return "Explaining finding evidence..."
+    elif name == "show_constraint_violations":
+        return "Looking up related project constraints..."
     return f"Using {name}..."

@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from revlo.parser.models import ParsedSchematic
 from revlo.reviewer.models import (
     Finding,
     FindingCategory,
@@ -23,6 +24,7 @@ from revlo.tui.app import (
     FilterBar,
     FindingItem,
     FindingsSidebar,
+    InvestigationTarget,
     RevloApp,
 )
 from revlo.tui.chat import (
@@ -31,6 +33,7 @@ from revlo.tui.chat import (
     build_ask_system_prompt,
     markup_response,
 )
+from revlo.tui.tools import SCHEMATIC_TOOLS, execute_tool
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +166,61 @@ class TestBuildAskSystemPrompt:
     def test_empty_report_no_findings_section(self, empty_report):
         prompt = build_ask_system_prompt(empty_report)
         assert "Current Review Findings" not in prompt
+
+
+def test_new_investigation_tools_are_registered():
+    names = {tool["name"] for tool in SCHEMATIC_TOOLS}
+    assert {
+        "find_decoupling_caps",
+        "trace_power_tree",
+        "find_reset_chain",
+        "find_boot_straps",
+        "find_interface_bundle",
+        "compare_two_refs",
+        "explain_finding_evidence",
+        "show_constraint_violations",
+    }.issubset(names)
+
+
+def test_registered_but_unimplemented_tool_fails_safely():
+    result = execute_tool("trace_power_tree", {"net_name": "3V3"}, ParsedSchematic())
+    assert "registered for investigation mode" in result
+
+
+def test_build_investigation_target_uses_finding_evidence(sample_report: ReviewReport):
+    finding = sample_report.findings[0]
+    finding.evidence.refs = ["C1"]
+    finding.evidence.nets = ["3V3"]
+    app = RevloApp(sample_report, "/tmp/test.kicad_sch")
+
+    target = app._build_investigation_target(finding)
+
+    assert target == InvestigationTarget(
+        severity="error",
+        title="Missing cap",
+        component_ref="U1",
+        refs=["U1", "C1"],
+        nets=["3V3"],
+        recommendation="Add a 100nF capacitor close to the power pins.",
+    )
+
+
+def test_investigation_target_banner_text():
+    target = InvestigationTarget(
+        severity="warning",
+        title="Reset path issue",
+        component_ref="U2",
+        refs=["U2", "R5"],
+        nets=["NRST"],
+        recommendation="Add a pull-up.",
+    )
+
+    banner = target.to_banner_text()
+
+    assert "[WARNING] U2: Reset path issue" in banner
+    assert "refs=U2, R5" in banner
+    assert "nets=NRST" in banner
+    assert "recommendation=Add a pull-up." in banner
 
 
 # ---------------------------------------------------------------------------

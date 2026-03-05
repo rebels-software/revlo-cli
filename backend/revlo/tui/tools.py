@@ -70,6 +70,154 @@ SCHEMATIC_TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "find_decoupling_caps",
+        "description": (
+            "Find likely decoupling capacitors for a component and summarize the "
+            "associated power nets."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Target component reference, e.g. 'U1'",
+                },
+            },
+            "required": ["ref"],
+        },
+    },
+    {
+        "name": "trace_power_tree",
+        "description": (
+            "Trace a power net through likely regulators and connected loads. "
+            "Clearly distinguishes observed connectivity from inference."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "net_name": {
+                    "type": "string",
+                    "description": "Power net name, e.g. '+3V3' or 'VBAT'",
+                },
+            },
+            "required": ["net_name"],
+        },
+    },
+    {
+        "name": "find_reset_chain",
+        "description": (
+            "Trace reset-related nets, pull components, supervisors, buttons, "
+            "and likely MCU reset pins."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Optional component reference to anchor the reset search",
+                },
+                "net_name": {
+                    "type": "string",
+                    "description": "Optional reset net name to trace directly",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "find_boot_straps",
+        "description": (
+            "Identify likely boot or mode pins and the pull-up or pull-down "
+            "networks attached to them."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Target component reference, e.g. 'U1'",
+                },
+            },
+            "required": ["ref"],
+        },
+    },
+    {
+        "name": "find_interface_bundle",
+        "description": (
+            "Group nets and connected refs for one interface family such as USB, "
+            "I2C, SPI, UART, or CAN."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "interface_type": {
+                    "type": "string",
+                    "enum": ["USB", "I2C", "SPI", "UART", "CAN"],
+                    "description": "Interface family to group",
+                },
+            },
+            "required": ["interface_type"],
+        },
+    },
+    {
+        "name": "compare_two_refs",
+        "description": (
+            "Compare two components by pins, connected nets, and key metadata."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref_a": {
+                    "type": "string",
+                    "description": "First component reference, e.g. 'U1'",
+                },
+                "ref_b": {
+                    "type": "string",
+                    "description": "Second component reference, e.g. 'U2'",
+                },
+            },
+            "required": ["ref_a", "ref_b"],
+        },
+    },
+    {
+        "name": "explain_finding_evidence",
+        "description": (
+            "Summarize the structured refs, nets, sheets, and datasheet context "
+            "behind a finding."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "finding_ref": {
+                    "type": "string",
+                    "description": "Finding identifier or component reference in the current review context",
+                },
+            },
+            "required": ["finding_ref"],
+        },
+    },
+    {
+        "name": "show_constraint_violations",
+        "description": (
+            "Show relevant project constraint violations or unverified constraints "
+            "for a finding, ref, or net."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Optional component reference",
+                },
+                "finding_ref": {
+                    "type": "string",
+                    "description": "Optional finding reference from the current review context",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -89,6 +237,20 @@ def execute_tool(
         return _find_unconnected(args.get("ref"), schematic)
     elif name == "list_power_rails":
         return _list_power_rails(schematic)
+    elif name in {
+        "find_decoupling_caps",
+        "trace_power_tree",
+        "find_reset_chain",
+        "find_boot_straps",
+        "find_interface_bundle",
+        "compare_two_refs",
+        "explain_finding_evidence",
+        "show_constraint_violations",
+    }:
+        return (
+            f"Tool '{name}' is registered for investigation mode but is not "
+            "implemented yet."
+        )
     return f"Unknown tool: {name}"
 
 
