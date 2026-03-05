@@ -295,6 +295,7 @@ class TestReviewSchematic:
             enabled=None,
             bom=None,
             project_constraints=None,
+            custom_rule_packs=None,
         )
         assert [f.title for f in report.findings] == [
             "Scaffold deterministic issue",
@@ -324,6 +325,7 @@ class TestReviewSchematic:
             enabled=False,
             bom=None,
             project_constraints=None,
+            custom_rule_packs=None,
         )
         assert [f.title for f in report.findings] == ["Missing decoupling capacitor"]
 

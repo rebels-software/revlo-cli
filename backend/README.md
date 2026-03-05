@@ -1,15 +1,15 @@
 <div align="center">
 
 ```
-██████╗ ███████╗██╗   ██╗██╗      ██████╗ 
-██╔══██╗██╔════╝██║   ██║██║     ██╔═══██╗
-██████╔╝█████╗  ██║   ██║██║     ██║   ██║
-██╔══██╗██╔══╝  ╚██╗ ██╔╝██║     ██║   ██║
-██║  ██║███████╗ ╚████╔╝ ███████╗╚██████╔╝
-╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝ 
+                            ██████╗ ███████╗██╗   ██╗██╗      ██████╗ 
+                            ██╔══██╗██╔════╝██║   ██║██║     ██╔═══██╗
+                            ██████╔╝█████╗  ██║   ██║██║     ██║   ██║
+                            ██╔══██╗██╔══╝  ╚██╗ ██╔╝██║     ██║   ██║
+                            ██║  ██║███████╗ ╚████╔╝ ███████╗╚██████╔╝
+                            ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚══════╝ ╚═════╝ 
 ```
 
-[![PyPI](https://img.shields.io/pypi/v/revlo-cli)](https://pypi.org/project/revlo-cli/)
+[![Version](https://img.shields.io/badge/version-0.3.0-teal)](https://pypi.org/project/revlo-cli/)
 [![Python](https://img.shields.io/pypi/pyversions/revlo-cli)](https://pypi.org/project/revlo-cli/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
@@ -35,6 +35,14 @@ Revlo is currently an alpha-stage schematic review tool. The implemented runtime
 - **Confidence-Scored Findings** -- Every finding includes a 0.0-1.0 confidence score so you can prioritize what matters
 - **Interactive TUI Browser** -- Browse and filter findings in a full-screen terminal UI with severity highlighting
 - **Ask Mode** -- Interactive chat with live access to your schematic via built-in tools
+- **Deterministic Rule Engine** -- Built-in checks for power connectivity, decoupling, I2C pull-ups, library hygiene, and BOM coverage run without LLM calls
+- **Custom Rule Packs** -- Project-local JSON rule packs execute alongside built-in checks with additive or override modes
+- **Review Profiles** -- Built-in profiles (generic, MCU board, sensor node, power supply) tune prompts and severity weighting
+- **Baseline & Waiver Tracking** -- Save baselines, classify findings as new/existing/waived/resolved across reviews
+- **Schematic Diff Review** -- Compare two schematic revisions and tag change-driven findings
+- **CI Integration** -- Non-interactive `check` command with severity/category thresholds and versioned JSON policy output
+- **Sign-Off Reports** -- Export stakeholder-ready packets that separate unresolved issues from accepted risk
+- **Investigation Mode** -- Focus Ask Mode on a specific finding with expanded tools: decoupling, power tree, reset chain, boot straps, interface bundles, and constraint analysis
 - **Branded CLI Output** -- Progress bars, colour-coded severity cards, and a summary line at a glance
 - **Review History** -- Every review and conversation is saved automatically; re-open past reviews without re-running
 - **JSON & Markdown Export** -- Pipe structured output into your CI/CD pipeline or generate human-readable reports
@@ -60,50 +68,41 @@ export OPENAI_API_KEY="sk-proj-..."
 revlo review path/to/schematic.kicad_sch
 ```
 
-That runs the fast review path by default: parse the schematic, run the AI review, and launch the interactive TUI without waiting for datasheet enrichment.
-
-For the slower, datasheet-enriched path:
-
-```bash
-revlo review path/to/schematic.kicad_sch --full-review
-```
-
-### Configure Provider And Models
-
-Create a `revlo.toml` file in your project directory:
-
-```toml
-[llm]
-provider = "openai"
-review_model = "gpt-5.4"
-extraction_model = "gpt-5.3"
-ask_model = "gpt-5.4"
-datasheet_concurrency = 4
-```
-
-To switch to Anthropic, change only `provider` and the model IDs:
-
-```toml
-[llm]
-provider = "anthropic"
-review_model = "claude-opus-4-6"
-extraction_model = "claude-haiku-4-5-20251001"
-ask_model = "claude-opus-4-6"
-datasheet_concurrency = 4
-```
+That's it. Revlo parses the schematic, fetches datasheets, runs the AI review, and launches the interactive TUI.
 
 ## Requirements
 
 - Python 3.11+
-- An API key for the configured provider:
-  - `OPENAI_API_KEY` when `provider = "openai"`
-  - `ANTHROPIC_API_KEY` when `provider = "anthropic"`
+- An `OPENAI_API_KEY` (default provider) or `ANTHROPIC_API_KEY` for review and datasheet extraction
 - KiCad schematic in modern `.kicad_sch` format
 
 Optional:
 
 - `kicad-cli` installed for more accurate net connectivity
 - `MOUSER_API_KEY` and `FARNELL_API_KEY` for broader automatic datasheet lookup
+
+## Configuration
+
+Revlo reads configuration from a `revlo.toml` file in the project directory (or any parent). The file is optional -- all settings have sensible defaults.
+
+```toml
+[llm]
+provider = "openai"           # "openai" (default) or "anthropic"
+review_model = "gpt-5.4"      # Override the review model
+extraction_model = "gpt-5.3"  # Override the datasheet extraction model
+ask_model = "gpt-5.4"         # Override the Ask Mode model
+datasheet_concurrency = 4     # Max concurrent datasheet fetches
+
+[review]
+profile = "generic"           # "generic", "mcu-board", "sensor-node", "power-supply"
+```
+
+You can also set the provider via environment variable:
+
+```bash
+export REVLO_LLM_PROVIDER="anthropic"   # Switch to Anthropic
+export REVLO_REVIEW_MODEL="claude-opus-4-6"  # Override model
+```
 
 ## Example Output
 
@@ -338,7 +337,63 @@ revlo history board.kicad_sch
 
 # Load a specific past review in the TUI
 revlo history board.kicad_sch --load 2
+
+# Export sign-off report for stakeholders
+revlo review board.kicad_sch --signoff signoff-packet.md
+
+# Use a review profile tuned for MCU boards
+revlo review board.kicad_sch --profile mcu-board
+
+# Compare against a previous revision (diff review)
+revlo review board.kicad_sch --compare-to board-v1.kicad_sch
+
+# Provide a BOM for sourcing checks
+revlo review board.kicad_sch --bom board-bom.csv
+
+# Non-interactive CI check with severity threshold
+revlo check board.kicad_sch --fail-on error --policy-json > results.json
 ```
+
+## CI Integration
+
+Use `revlo check` with `--policy-json` to emit a versioned JSON schema (v1) that downstream tooling can parse reliably. The exit code reflects the `--fail-on` policy:
+
+```bash
+# Fail CI on errors, write versioned JSON to results.json
+revlo check board.kicad_sch --policy-json --fail-on error --output results.json
+
+# Or pipe to stdout -- exit code 2 means policy violation
+revlo check board.kicad_sch --policy-json --fail-on error > results.json
+echo "Exit code: $?"
+```
+
+The JSON output includes `schema_version`, finding IDs (stable SHA-256 fingerprints), severity, category, confidence, source type, baseline classification, evidence, and review metadata.
+
+## Custom Rule Packs
+
+Create a `revlo-rules.json` file next to your schematic to add project-specific checks:
+
+```json
+{
+  "schema_version": 1,
+  "name": "my-project-rules",
+  "additive": true,
+  "rules": [
+    {
+      "id": "no-0201-passives",
+      "title": "0201 passives not allowed",
+      "severity": "warning",
+      "category": "library_hygiene",
+      "remediation": "Use 0402 or larger package sizes for manufacturability.",
+      "conditions": [
+        {"field": "value_contains", "operator": "contains", "value": "0201"}
+      ]
+    }
+  ]
+}
+```
+
+Set `"additive": false` to replace built-in rules entirely with your custom pack.
 
 ## Development
 

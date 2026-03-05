@@ -279,7 +279,7 @@ Return your findings as a JSON object with a `"findings"` key containing an arra
 
 Each finding MUST have these fields:
 - `severity`: `"error"` | `"warning"` | `"suggestion"`
-- `category`: one of: `decoupling`, `pull_up`, `power`, `signal_integrity`, `grounding`, `esd_protection`, `clock`, `reset`, `unused_pin`, `component_value`, `connectivity`, `thermal`
+- `category`: one of: `decoupling`, `pull_up`, `power`, `signal_integrity`, `grounding`, `esd_protection`, `clock`, `reset`, `unused_pin`, `component_value`, `connectivity`, `thermal`, `library_hygiene`, `bom`
 - `component_ref`: the component reference designator from the schematic data (e.g., `"U1"`, `"R3"`)
 - `title`: short descriptive title (<=80 chars)
 - `description`: detailed explanation of the issue, citing specific pin numbers and net names

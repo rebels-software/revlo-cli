@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
 from revlo.datasheet.models import DatasheetSpec
@@ -498,7 +497,6 @@ def _find_decoupling_caps(ref: str, schematic: ParsedSchematic) -> str:
     if component is None:
         return f"Component '{ref}' not found in schematic."
 
-    component_lookup = _build_component_lookup(schematic)
     power_nets = {
         pin.connected_net
         for pin in component.pins

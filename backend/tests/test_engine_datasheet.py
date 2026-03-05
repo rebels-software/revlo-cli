@@ -166,12 +166,12 @@ def _make_multi_ic_schematic() -> ParsedSchematic:
     )
 
 
-async def _noop_review_with_ee_agent(chunks, system_prompt, model):
+async def _noop_review_with_ee_agent(chunks, system_prompt, provider, model):
     """Mock _review_with_ee_agent that returns no findings."""
     return []
 
 
-async def _noop_review_chunk_generic(chunk, model):
+async def _noop_review_chunk_generic(chunk, provider, model, review_profile):
     """Mock _review_chunk_generic that returns no findings."""
     return []
 

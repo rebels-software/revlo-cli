@@ -328,6 +328,7 @@ def test_specs_passed_to_review_schematic_via_asyncio_run(
         model=None,
         datasheet_specs=None,
         min_confidence=0.5,
+        **kwargs,
     ):
         review_schematic_kwargs["schematic"] = schematic
         review_schematic_kwargs["provider"] = provider
