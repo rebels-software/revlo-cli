@@ -212,9 +212,9 @@ def test_new_investigation_tools_are_registered():
     }.issubset(names)
 
 
-def test_registered_but_unimplemented_tool_fails_safely():
+def test_registered_investigation_tool_executes_safely_with_missing_net():
     result = execute_tool("trace_power_tree", {"net_name": "3V3"}, ParsedSchematic())
-    assert "registered for investigation mode" in result
+    assert "Power net '3V3' not found." in result
 
 
 def test_build_investigation_target_uses_finding_evidence(sample_report: ReviewReport):

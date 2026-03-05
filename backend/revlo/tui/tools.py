@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any
 
 from revlo.datasheet.models import DatasheetSpec
-from revlo.parser.models import ParsedSchematic
+from revlo.parser.models import ParsedComponent, ParsedNet, ParsedSchematic
 
 
 SCHEMATIC_TOOLS = [
@@ -237,19 +238,30 @@ def execute_tool(
         return _find_unconnected(args.get("ref"), schematic)
     elif name == "list_power_rails":
         return _list_power_rails(schematic)
-    elif name in {
-        "find_decoupling_caps",
-        "trace_power_tree",
-        "find_reset_chain",
-        "find_boot_straps",
-        "find_interface_bundle",
-        "compare_two_refs",
-        "explain_finding_evidence",
-        "show_constraint_violations",
-    }:
+    elif name == "find_decoupling_caps":
+        return _find_decoupling_caps(args.get("ref", ""), schematic)
+    elif name == "trace_power_tree":
+        return _trace_power_tree(args.get("net_name", ""), schematic)
+    elif name == "find_reset_chain":
+        return _find_reset_chain(
+            schematic,
+            ref=args.get("ref"),
+            net_name=args.get("net_name"),
+        )
+    elif name == "find_boot_straps":
+        return _find_boot_straps(args.get("ref", ""), schematic)
+    elif name == "find_interface_bundle":
+        return _find_interface_bundle(args.get("interface_type", ""), schematic)
+    elif name == "compare_two_refs":
+        return _compare_two_refs(
+            args.get("ref_a", ""),
+            args.get("ref_b", ""),
+            schematic,
+        )
+    elif name in {"explain_finding_evidence", "show_constraint_violations"}:
         return (
-            f"Tool '{name}' is registered for investigation mode but is not "
-            "implemented yet."
+            f"Tool '{name}' requires active review context and is not available "
+            "from the raw schematic graph alone."
         )
     return f"Unknown tool: {name}"
 
@@ -427,5 +439,225 @@ def _list_power_rails(schematic: ParsedSchematic) -> str:
         refs = sorted({pc.component_ref for pc in net.pins})
         refs_str = ", ".join(refs) if len(refs) <= 15 else ", ".join(refs[:15]) + "..."
         lines.append(f"  {net.name}: {len(refs)} components ({refs_str})")
+
+    return "\n".join(lines)
+
+
+def _build_component_lookup(
+    schematic: ParsedSchematic,
+) -> dict[str, ParsedComponent]:
+    return {component.reference.upper(): component for component in schematic.components}
+
+
+def _build_net_lookup(schematic: ParsedSchematic) -> dict[str, ParsedNet]:
+    lookup: dict[str, ParsedNet] = {}
+    for net in schematic.nets:
+        lookup[net.name.upper()] = net
+    return lookup
+
+
+def _find_component(
+    schematic: ParsedSchematic,
+    ref: str,
+) -> ParsedComponent | None:
+    return _build_component_lookup(schematic).get(ref.strip().upper())
+
+
+def _component_nets(component: ParsedComponent) -> list[str]:
+    return [pin.connected_net for pin in component.pins if pin.connected_net]
+
+
+def _is_ground_net(net_name: str) -> bool:
+    normalized = net_name.strip().upper()
+    return any(token in normalized for token in ("GND", "VSS", "PGND", "AGND", "DGND"))
+
+
+def _is_capacitor(component: ParsedComponent) -> bool:
+    ref = component.reference.upper()
+    lib_id = component.lib_id.upper()
+    return ref.startswith("C") or lib_id.startswith("DEVICE:C")
+
+
+def _is_resistor(component: ParsedComponent) -> bool:
+    ref = component.reference.upper()
+    lib_id = component.lib_id.upper()
+    return ref.startswith("R") or lib_id.startswith("DEVICE:R")
+
+
+def _find_decoupling_caps(ref: str, schematic: ParsedSchematic) -> str:
+    """Find likely decoupling capacitors tied to a component's power nets."""
+    component = _find_component(schematic, ref)
+    if component is None:
+        return f"Component '{ref}' not found in schematic."
+
+    component_lookup = _build_component_lookup(schematic)
+    power_nets = {
+        pin.connected_net
+        for pin in component.pins
+        if pin.connected_net and (
+            "power" in pin.electrical_type.lower()
+            or _build_net_lookup(schematic).get(pin.connected_net.upper(), ParsedNet(name="")).is_power
+        )
+    }
+    if not power_nets:
+        return f"No power nets found on {component.reference}."
+
+    lines = [f"Likely decoupling capacitors for {component.reference}:"]
+    found_any = False
+    for net_name in sorted(power_nets):
+        matches: list[str] = []
+        for candidate in schematic.components:
+            if candidate.reference.upper() == component.reference.upper():
+                continue
+            if not _is_capacitor(candidate):
+                continue
+            candidate_nets = [pin.connected_net for pin in candidate.pins if pin.connected_net]
+            if net_name in candidate_nets and any(
+                ground_net and _is_ground_net(ground_net)
+                for ground_net in candidate_nets
+            ):
+                value = f" ({candidate.value})" if candidate.value else ""
+                matches.append(f"{candidate.reference}{value}")
+
+        if matches:
+            found_any = True
+            lines.append(f"  {net_name}: {', '.join(sorted(matches))}")
+        else:
+            lines.append(f"  {net_name}: no obvious capacitor to ground found")
+
+    if not found_any:
+        lines.append("Observed power nets, but no likely decoupling capacitors were found.")
+    return "\n".join(lines)
+
+
+def _trace_power_tree(net_name: str, schematic: ParsedSchematic) -> str:
+    """Trace a power net through observed loads and likely source components."""
+    net = _build_net_lookup(schematic).get(net_name.strip().upper())
+    if net is None:
+        return f"Power net '{net_name}' not found."
+
+    component_lookup = _build_component_lookup(schematic)
+    lines = [f"Power trace for {net.name}:"]
+    observed_refs = sorted({pin.component_ref for pin in net.pins})
+    if observed_refs:
+        lines.append(f"Observed connections: {', '.join(observed_refs)}")
+
+    sources: list[str] = []
+    loads: list[str] = []
+    for ref in observed_refs:
+        component = component_lookup.get(ref.upper())
+        if component is None:
+            continue
+        attached_pins = [
+            pin for pin in component.pins
+            if pin.connected_net and pin.connected_net.upper() == net.name.upper()
+        ]
+        pin_names = {pin.name.upper() for pin in attached_pins}
+        other_power_nets = sorted(
+            {
+                other_net
+                for other_net in _component_nets(component)
+                if other_net and other_net.upper() != net.name.upper()
+                and (
+                    _is_ground_net(other_net)
+                    or _build_net_lookup(schematic).get(other_net.upper(), ParsedNet(name="")).is_power
+                )
+            }
+        )
+        if pin_names & {"OUT", "VOUT", "VO", "SW"}:
+            source_text = component.reference
+            if other_power_nets:
+                source_text += f" (observed upstream nets: {', '.join(other_power_nets)})"
+            sources.append(source_text)
+        else:
+            load_text = component.reference
+            if other_power_nets:
+                load_text += f" (also on {', '.join(other_power_nets)})"
+            loads.append(load_text)
+
+    if sources:
+        lines.append(f"Likely source components: {', '.join(sources)}")
+    else:
+        lines.append("Likely source components: none identified from observed pin names")
+
+    if loads:
+        lines.append(f"Likely loads and dependent parts: {', '.join(loads)}")
+
+    lines.append(
+        "Inference note: regulator/source identification is heuristic and based on "
+        "pin names plus connected power nets."
+    )
+    return "\n".join(lines)
+
+
+def _find_reset_chain(
+    schematic: ParsedSchematic,
+    *,
+    ref: str | None = None,
+    net_name: str | None = None,
+) -> str:
+    """Trace reset-related nets, pulls, and connected parts."""
+    target_nets: set[str] = set()
+    if net_name:
+        target_nets.add(net_name.strip())
+    elif ref:
+        component = _find_component(schematic, ref)
+        if component is None:
+            return f"Component '{ref}' not found in schematic."
+        for pin in component.pins:
+            pin_name = pin.name.upper()
+            if "RST" in pin_name or "RESET" in pin_name or "NRST" in pin_name:
+                if pin.connected_net:
+                    target_nets.add(pin.connected_net)
+    else:
+        for net in schematic.nets:
+            name = net.name.upper()
+            if "RST" in name or "RESET" in name or "NRST" in name:
+                target_nets.add(net.name)
+
+    if not target_nets:
+        scope = f" on {ref}" if ref else ""
+        return f"No reset-related nets found{scope}."
+
+    net_lookup = _build_net_lookup(schematic)
+    component_lookup = _build_component_lookup(schematic)
+    lines = ["Reset chain investigation:"]
+    for target in sorted(target_nets):
+        net = net_lookup.get(target.upper())
+        if net is None:
+            continue
+        lines.append(f"Net {net.name}:")
+        connected = sorted({pin.component_ref for pin in net.pins})
+        lines.append(f"  Observed refs: {', '.join(connected)}")
+
+        pulls: list[str] = []
+        controls: list[str] = []
+        for connected_ref in connected:
+            component = component_lookup.get(connected_ref.upper())
+            if component is None:
+                continue
+            other_nets = sorted(
+                {
+                    other_net
+                    for other_net in _component_nets(component)
+                    if other_net and other_net.upper() != net.name.upper()
+                }
+            )
+            if _is_resistor(component):
+                target_desc = ", ".join(other_nets) if other_nets else "other net unknown"
+                pulls.append(f"{component.reference} -> {target_desc}")
+            elif component.reference.upper().startswith("SW"):
+                target_desc = ", ".join(other_nets) if other_nets else "other net unknown"
+                controls.append(f"{component.reference} -> {target_desc}")
+            elif any(
+                token in component.value.upper() or token in component.lib_id.upper()
+                for token in ("RESET", "SUPERVISOR", "WATCHDOG")
+            ):
+                controls.append(component.reference)
+
+        if pulls:
+            lines.append(f"  Pull network: {', '.join(sorted(pulls))}")
+        if controls:
+            lines.append(f"  Control path: {', '.join(sorted(controls))}")
 
     return "\n".join(lines)
