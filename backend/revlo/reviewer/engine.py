@@ -16,6 +16,7 @@ from revlo.parser.models import ParsedSchematic
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.reviewer.models import Finding, ReviewReport
 from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
+from revlo.reviewer.rules import run_deterministic_checks
 from revlo.skills import load_skill
 
 logger = logging.getLogger(__name__)
@@ -260,6 +261,7 @@ async def review_schematic(
     model: str | None = None,
     datasheet_specs: dict[str, DatasheetSpec] | None = None,
     min_confidence: float = 0.5,
+    enable_deterministic_checks: bool | None = None,
 ) -> ReviewReport:
     """Review a parsed schematic by sending all chunks to the EE review agent.
 
@@ -278,12 +280,18 @@ async def review_schematic(
         min_confidence: Minimum confidence threshold (0.0--1.0). Findings
             with ``confidence < min_confidence`` are silently dropped.
             Defaults to ``0.5``.
+        enable_deterministic_checks: Optional override for the deterministic
+            rule scaffold. When ``None``, environment-based configuration is used.
 
     Malformed responses are logged and skipped -- this function never raises
     due to bad LLM output.
     """
     resolved_model = resolve_review_model(provider, model)
     chunks = chunk_schematic(schematic)
+    deterministic_findings = run_deterministic_checks(
+        schematic,
+        enabled=enable_deterministic_checks,
+    )
 
     # Inject datasheet specs into chunks when available.
     if datasheet_specs:
@@ -295,9 +303,14 @@ async def review_schematic(
             }
 
     if not chunks:
+        deterministic_findings = [
+            finding
+            for finding in deterministic_findings
+            if finding.confidence >= min_confidence
+        ]
         return ReviewReport(
-            findings=[],
-            summary="Found 0 issues (0 errors, 0 warnings, 0 suggestions)",
+            findings=deterministic_findings,
+            summary=_build_summary(deterministic_findings),
             schematic_title=schematic.title_block.title,
             review_date=datetime.date.today().isoformat(),
             datasheet_specs=datasheet_specs or {},
@@ -329,7 +342,8 @@ async def review_schematic(
             for index, batch in enumerate(chunk_batches, start=1)
         ]
     )
-    all_findings = [finding for batch in batch_results for finding in batch]
+    all_findings = list(deterministic_findings)
+    all_findings.extend(finding for batch in batch_results for finding in batch)
 
     # Filter low-confidence findings.
     all_findings = [f for f in all_findings if f.confidence >= min_confidence]

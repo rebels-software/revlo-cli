@@ -268,6 +268,70 @@ class TestReviewSchematic:
         assert report.stats.total == len(report.findings)
         assert report.stats.total >= 3
 
+    @pytest.mark.asyncio
+    async def test_merges_deterministic_and_llm_findings(self):
+        """Deterministic findings should be merged with LLM findings."""
+        schematic = _make_schematic()
+        deterministic = [
+            Finding(**_valid_finding_dict(
+                component_ref="C1",
+                title="Scaffold deterministic issue",
+                source_type="deterministic",
+            ))
+        ]
+        llm_findings = [Finding(**_valid_finding_dict())]
+
+        with patch(
+            "revlo.reviewer.engine.run_deterministic_checks",
+            return_value=deterministic,
+        ) as mock_rules, patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_mock_review_with_ee_agent(llm_findings),
+        ):
+            report = await review_schematic(schematic)
+
+        mock_rules.assert_called_once_with(schematic, enabled=None)
+        assert [f.title for f in report.findings] == [
+            "Scaffold deterministic issue",
+            "Missing decoupling capacitor",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_can_disable_deterministic_checks_via_parameter(self):
+        """Function parameter should disable deterministic checks."""
+        schematic = _make_schematic()
+        llm_findings = [Finding(**_valid_finding_dict())]
+
+        with patch(
+            "revlo.reviewer.engine.run_deterministic_checks",
+            return_value=[],
+        ) as mock_rules, patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_mock_review_with_ee_agent(llm_findings),
+        ):
+            report = await review_schematic(
+                schematic,
+                enable_deterministic_checks=False,
+            )
+
+        mock_rules.assert_called_once_with(schematic, enabled=False)
+        assert [f.title for f in report.findings] == ["Missing decoupling capacitor"]
+
+    @pytest.mark.asyncio
+    async def test_empty_schematic_can_return_deterministic_findings(self):
+        """Deterministic findings still surface when there are no review chunks."""
+        schematic = ParsedSchematic(title_block=TitleBlockInfo(title="Empty Board"))
+        deterministic = [Finding(**_valid_finding_dict(source_type="deterministic"))]
+
+        with patch(
+            "revlo.reviewer.engine.run_deterministic_checks",
+            return_value=deterministic,
+        ):
+            report = await review_schematic(schematic)
+
+        assert [f.source_type for f in report.findings] == ["deterministic"]
+        assert report.summary == "Found 1 issues (1 errors, 0 warnings, 0 suggestions)"
+
 
 # ---------------------------------------------------------------------------
 # Function signature
@@ -282,6 +346,11 @@ class TestFunctionSignature:
         import inspect
         sig = inspect.signature(review_schematic)
         assert "use_agents" not in sig.parameters
+
+    def test_deterministic_toggle_parameter_present(self):
+        import inspect
+        sig = inspect.signature(review_schematic)
+        assert "enable_deterministic_checks" in sig.parameters
 
 
 # ---------------------------------------------------------------------------

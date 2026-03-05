@@ -14,10 +14,18 @@ from revlo.reviewer.models import (
     SeverityStats,
 )
 from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
+from revlo.reviewer.rules import (
+    DeterministicRule,
+    DeterministicRuleEngine,
+    resolve_deterministic_checks_enabled,
+    run_deterministic_checks,
+)
 
 __all__ = [
     "DEFAULT_MODEL",
     "DatasheetEvidence",
+    "DeterministicRule",
+    "DeterministicRuleEngine",
     "Finding",
     "FindingCategory",
     "FindingEvidence",
@@ -31,5 +39,7 @@ __all__ = [
     "build_review_prompt",
     "format_chunk_data",
     "chunk_schematic",
+    "resolve_deterministic_checks_enabled",
     "review_schematic",
+    "run_deterministic_checks",
 ]
