@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from revlo import __version__
 from revlo.reviewer.models import (
     Finding,
+    FindingBaselineStatus,
     FindingEvidence,
     FindingSourceType,
     FindingCategory,
@@ -175,3 +176,45 @@ def load_waivers(schematic_path: str | Path) -> FindingWaivers | None:
     if not path.exists():
         return None
     return FindingWaivers.model_validate(json.loads(path.read_text()))
+
+
+def _waiver_is_active(entry: WaiverEntry) -> bool:
+    """Return whether a waiver entry is still active."""
+    if not entry.expires_at:
+        return True
+    try:
+        expires_at = datetime.fromisoformat(entry.expires_at)
+    except ValueError:
+        return True
+    return expires_at >= datetime.now(timezone.utc)
+
+
+def classify_findings(
+    report: ReviewReport,
+    schematic_path: str | Path,
+    *,
+    baseline: ReviewBaseline | None = None,
+    waivers: FindingWaivers | None = None,
+) -> ReviewReport:
+    """Classify findings as new, existing, or waived."""
+    baseline = baseline if baseline is not None else load_baseline(schematic_path)
+    waivers = waivers if waivers is not None else load_waivers(schematic_path)
+
+    baseline_fingerprints = {
+        finding.fingerprint for finding in baseline.findings
+    } if baseline is not None else set()
+    waived_fingerprints = {
+        entry.fingerprint
+        for entry in waivers.entries
+        if _waiver_is_active(entry)
+    } if waivers is not None else set()
+
+    for finding in report.findings:
+        fingerprint = finding_fingerprint(finding)
+        if fingerprint in waived_fingerprints:
+            finding.baseline_status = FindingBaselineStatus.waived
+        elif fingerprint in baseline_fingerprints:
+            finding.baseline_status = FindingBaselineStatus.existing
+        else:
+            finding.baseline_status = FindingBaselineStatus.new
+    return report

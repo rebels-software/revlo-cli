@@ -24,7 +24,7 @@ from revlo.config import (
 )
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
-from revlo.review_state import finding_fingerprint, load_baseline
+from revlo.review_state import classify_findings, finding_fingerprint, load_baseline
 from revlo.reviewer import review_schematic
 from revlo.reviewer.models import Finding, FindingCategory, ReviewReport, Severity
 from revlo.ui import (
@@ -434,6 +434,7 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
     report.llm_model = model
     report.datasheet_mode = "full" if datasheet_enabled else "fast"
     report.review_profile = review_profile
+    classify_findings(report, path)
 
     # Auto-save review
     from revlo.storage import save_review

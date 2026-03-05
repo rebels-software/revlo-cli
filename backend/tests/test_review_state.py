@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from revlo.review_state import (
+    ReviewBaseline,
     FindingWaivers,
     WaiverEntry,
     baseline_path_for_schematic,
+    classify_findings,
     finding_fingerprint,
     load_baseline,
     load_waivers,
@@ -17,6 +19,7 @@ from revlo.review_state import (
     waivers_path_for_schematic,
 )
 from revlo.reviewer.models import (
+    FindingBaselineStatus,
     DatasheetEvidence,
     Finding,
     FindingCategory,
@@ -156,3 +159,42 @@ def test_load_waivers_returns_none_when_missing(tmp_path: Path) -> None:
     schematic.write_text("(kicad_sch ...)")
 
     assert load_waivers(schematic) is None
+
+
+def test_classify_findings_marks_existing_and_new(tmp_path: Path) -> None:
+    schematic = tmp_path / "board.kicad_sch"
+    schematic.write_text("(kicad_sch ...)")
+    finding = _make_finding()
+    report = ReviewReport(findings=[finding])
+    baseline = ReviewBaseline(
+        schematic="board.kicad_sch",
+        created_at="2026-03-05T12:00:00+00:00",
+        revlo_version="0.1.0",
+        findings=[snapshot_finding(finding)],
+    )
+
+    classify_findings(report, schematic, baseline=baseline)
+
+    assert report.findings[0].baseline_status == FindingBaselineStatus.existing
+
+
+def test_classify_findings_marks_waived_when_active_waiver_matches(tmp_path: Path) -> None:
+    schematic = tmp_path / "board.kicad_sch"
+    schematic.write_text("(kicad_sch ...)")
+    finding = _make_finding()
+    report = ReviewReport(findings=[finding])
+    waivers = FindingWaivers(
+        schematic="board.kicad_sch",
+        updated_at="2026-03-05T12:00:00+00:00",
+        entries=[
+            WaiverEntry(
+                fingerprint=finding_fingerprint(finding),
+                reason="Accepted for prototype",
+                created_at="2026-03-05T12:00:00+00:00",
+            )
+        ],
+    )
+
+    classify_findings(report, schematic, waivers=waivers)
+
+    assert report.findings[0].baseline_status == FindingBaselineStatus.waived

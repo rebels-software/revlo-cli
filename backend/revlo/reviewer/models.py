@@ -38,6 +38,13 @@ class FindingSourceType(StrEnum):
     custom_rule = "custom_rule"
 
 
+class FindingBaselineStatus(StrEnum):
+    unclassified = "unclassified"
+    new = "new"
+    existing = "existing"
+    waived = "waived"
+
+
 class DatasheetEvidence(BaseModel):
     mpn: str = ""
     manufacturer: str = ""
@@ -63,6 +70,7 @@ class Finding(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     suggested_fix: str = ""
     source_type: FindingSourceType = FindingSourceType.llm
+    baseline_status: FindingBaselineStatus = FindingBaselineStatus.unclassified
     evidence: FindingEvidence = Field(default_factory=FindingEvidence)
 
 

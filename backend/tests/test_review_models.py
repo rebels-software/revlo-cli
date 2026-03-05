@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from revlo.reviewer.models import (
+    FindingBaselineStatus,
     DatasheetEvidence,
     Finding,
     FindingCategory,
@@ -72,6 +73,7 @@ class TestFinding:
     def test_source_and_evidence_defaults(self):
         f = self._make()
         assert f.source_type == FindingSourceType.llm
+        assert f.baseline_status == FindingBaselineStatus.unclassified
         assert f.evidence.refs == []
         assert f.evidence.datasheets == []
 
@@ -93,6 +95,7 @@ class TestFinding:
         )
         data = f.model_dump()
         assert data["source_type"] == "deterministic"
+        assert data["baseline_status"] == "unclassified"
         assert data["evidence"]["refs"] == ["U1", "C1"]
         assert data["evidence"]["datasheets"][0]["relevant_pages"] == [47, 52]
 
