@@ -12,7 +12,6 @@
 [![PyPI](https://img.shields.io/pypi/v/revlo-cli)](https://pypi.org/project/revlo-cli/)
 [![Python](https://img.shields.io/pypi/pyversions/revlo-cli)](https://pypi.org/project/revlo-cli/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-569%20passing-brightgreen)]()
 
 **Review your hardware before it reviews your wallet.**
 
@@ -24,10 +23,13 @@
 
 Revlo is a command-line tool that catches electrical engineering mistakes in KiCad schematics _before_ they become expensive PCB respins. Point it at a `.kicad_sch` file and get back actionable findings -- missing decoupling caps, wrong pull-up values, unterminated pins, power rail issues -- all verified against real datasheet specifications pulled automatically from the internet.
 
+Revlo is currently an alpha-stage schematic review tool. The implemented runtime focuses on KiCad schematics, datasheet enrichment, terminal-first review workflows, and interactive Ask Mode.
+
 ## Features
 
-- **KiCad 7/8/9 Parser** -- Extracts components, nets, connectivity, power symbols, and properties from `.kicad_sch` files
+- **KiCad 6/7/8/9 Parser** -- Extracts components, nets, connectivity, power symbols, and properties from `.kicad_sch` files
 - **Hierarchical Sub-sheet Support** -- Recursively parses sub-sheets and resolves cross-sheet nets with instance-aware references
+- **Ground-Truth Connectivity via `kicad-cli`** -- Uses KiCad's exported netlist when available, with automatic fallback to parser-derived connectivity
 - **Datasheet Intelligence** -- Automatically fetches component datasheets, extracts specs with AI, and caches results locally
 - **Comprehensive EE Review** -- Revlo reviews your design across decoupling, pull-ups, unused pins, reset circuits, clock/oscillator, signal integrity, power rails, grounding, ESD, and thermal concerns
 - **Confidence-Scored Findings** -- Every finding includes a 0.0-1.0 confidence score so you can prioritize what matters
@@ -60,6 +62,17 @@ revlo review path/to/schematic.kicad_sch
 
 That's it. Revlo parses the schematic, fetches datasheets, runs the AI review, and launches the interactive TUI.
 
+## Requirements
+
+- Python 3.11+
+- An `ANTHROPIC_API_KEY` for review and datasheet extraction
+- KiCad schematic in modern `.kicad_sch` format
+
+Optional:
+
+- `kicad-cli` installed for more accurate net connectivity
+- `MOUSER_API_KEY` and `FARNELL_API_KEY` for broader automatic datasheet lookup
+
 ## Example Output
 
 ### CLI Progress
@@ -82,7 +95,7 @@ AI-powered design review for KiCad schematics
 ■ Datasheets: 2 cached, 1 manual, 9 fetched, 0 failed
 ■ Running review...
 Found 3 errors, 5 warnings, 4 suggestions
-■ Review saved to .revlo/reviews/2025-01-15T10-30-00.json
+■ Review saved to .revlo/board-review-20250115T103000.json
 ■ Launching review browser...
 ```
 
@@ -209,6 +222,15 @@ revlo history board.kicad_sch --load 2
  └─────────────┘
 ```
 
+## Current Scope
+
+Revlo's implemented review path is schematic-first:
+
+- Fully implemented: schematic parsing, datasheet enrichment, AI review, TUI browsing, Ask Mode, review history
+- Not yet implemented as a live runtime path: PCB layout review from `.kicad_pcb`, BOM lifecycle analysis, web upload flow
+
+The review engine currently uses a direct Claude API workflow over structured schematic chunks rather than a live multi-agent orchestration layer.
+
 ## Datasheet Intelligence
 
 Revlo automatically fetches and analyzes component datasheets to make reviews more accurate. It resolves datasheet PDFs in this order:
@@ -270,8 +292,8 @@ revlo review board.kicad_sch --skip-datasheet
 # Filter low-confidence findings
 revlo review board.kicad_sch --min-confidence 0.7
 
-# Use a larger model for deeper review
-revlo review board.kicad_sch --model opus
+# Use a faster model instead of the default Opus review
+revlo review board.kicad_sch --model sonnet
 
 # Verbose output (show debug info)
 revlo review board.kicad_sch --verbose
@@ -300,6 +322,8 @@ cd backend && uv sync
 cd backend && uv run pytest tests/ -v
 ```
 
+Note: if the full suite fails, check for missing test fixtures first. The CLI/TUI tests depend on local schematic fixtures in `backend/tests/fixtures/`.
+
 ### Lint
 
 ```bash
@@ -311,10 +335,6 @@ cd backend && uv run ruff check revlo/
 ```bash
 cd backend && uv run python -c "from revlo.parser import parse_schematic; print('OK')"
 ```
-
-## Built With
-
-Built with **Opus 4.6** during a [Claude Code hackathon](https://cerebralvalley.ai/e/claude-code-hackathon). Revlo is an early-stage project -- more features, deeper analysis, and broader KiCad support are on the way.
 
 ## License
 
