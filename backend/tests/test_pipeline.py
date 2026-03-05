@@ -4,7 +4,6 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from revlo.datasheet.cache import DatasheetCache
 from revlo.datasheet.models import (
     DatasheetCacheEntry,
     DatasheetSpec,
@@ -205,7 +204,11 @@ async def test_full_pipeline_success(
     mock_resolve.assert_called_once_with(normalized, cache_dir=str(tmp_path))
     mock_download.assert_called_once_with("https://example.com/lm7805.pdf", tmp_path)
     mock_extract_text.assert_called_once_with(pdf_path)
-    mock_extract_spec.assert_called_once_with("LM7805 datasheet text...", "LM7805CT")
+    mock_extract_spec.assert_called_once_with(
+        "LM7805 datasheet text...",
+        "LM7805CT",
+        provider="openai",
+    )
     mock_cache_instance.put.assert_called_once()
     mock_cache_instance.save.assert_called_once()
 

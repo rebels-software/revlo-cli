@@ -79,7 +79,7 @@ def mock_review_report() -> ReviewReport:
 def fixture_path() -> str:
     """Return the path to the test fixture .kicad_sch file."""
     return str(
-        Path(__file__).parent / "fixtures" / "STM32F103CBT8_Devel.kicad_sch"
+        Path(__file__).parent / "fixtures" / "simello.kicad_sch"
     )
 
 
@@ -90,7 +90,7 @@ def mock_save_path() -> Path:
         Path(__file__).parent
         / "fixtures"
         / ".revlo"
-        / "STM32F103CBT8_Devel-review-20260212T000000.json"
+        / "simello-review-20260212T000000.json"
     )
 
 
@@ -165,7 +165,7 @@ def test_build_parser_open_with_flags():
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_success_markdown(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
@@ -201,7 +201,7 @@ def test_run_review_success_markdown(
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_success_json(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
@@ -236,7 +236,7 @@ def test_run_review_success_json(
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_success_output_file(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
@@ -281,7 +281,7 @@ def test_run_review_success_output_file(
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_success_json_to_file(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
@@ -323,7 +323,7 @@ def test_run_review_success_json_to_file(
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_rich_progress_on_stderr(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
@@ -354,7 +354,7 @@ def test_run_review_rich_progress_on_stderr(
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_json_suppresses_rich(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
@@ -387,7 +387,7 @@ def test_run_review_json_suppresses_rich(
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_no_tui_prints_cards(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
@@ -424,7 +424,7 @@ def test_run_review_no_tui_prints_cards(
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_output_file_with_rich_progress(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
@@ -466,7 +466,7 @@ def test_run_review_output_file_with_rich_progress(
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_summary_line_severity_counts(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
@@ -537,7 +537,7 @@ def test_run_review_summary_line_severity_counts(
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_json_no_tui_produces_json(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
@@ -569,7 +569,7 @@ def test_run_review_json_no_tui_produces_json(
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_json_output_file_shows_rich(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
@@ -617,7 +617,7 @@ def test_run_review_json_output_file_shows_rich(
 @patch("revlo.storage.save_review")
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_auto_saves(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
@@ -785,7 +785,7 @@ def test_ui_print_finding_cards_empty(capsys):
 # ---------------------------------------------------------------------------
 def test_run_review_file_not_found():
     """Test error when input file does not exist."""
-    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
         args = _build_parser().parse_args(["review", "nonexistent.kicad_sch"])
         with pytest.raises(SystemExit) as exc:
             _run_review(args)
@@ -793,7 +793,7 @@ def test_run_review_file_not_found():
 
 
 def test_run_review_missing_api_key(fixture_path: str):
-    """Test error when ANTHROPIC_API_KEY is not set."""
+    """Test error when OPENAI_API_KEY is not set."""
     with patch.dict(os.environ, {}, clear=True):
         args = _build_parser().parse_args(["review", fixture_path])
         with pytest.raises(SystemExit) as exc:
@@ -803,7 +803,7 @@ def test_run_review_missing_api_key(fixture_path: str):
 
 @patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.cli.parse_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_parse_error(
     mock_parse: MagicMock,
     mock_netlist: MagicMock,
@@ -822,7 +822,7 @@ def test_run_review_parse_error(
 
 @patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.cli.parse_schematic")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_review_error(
     mock_parse: MagicMock,
     mock_netlist: MagicMock,
@@ -847,7 +847,7 @@ def test_run_review_review_error(
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_run_review_output_write_error(
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
@@ -956,7 +956,7 @@ def test_run_open_json(
 # Test main() entry point
 # ---------------------------------------------------------------------------
 @patch("revlo.cli._run_review")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_main_with_review_subcommand(mock_run_review: MagicMock, fixture_path: str):
     """Test main() calls _run_review when review subcommand is provided."""
     with patch("sys.argv", ["revlo", "review", fixture_path]):
@@ -994,7 +994,7 @@ def test_main_help_flag(capsys):
 
 
 @patch("revlo.cli._run_review")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_main_logging_configured(mock_run_review: MagicMock, fixture_path: str):
     """Test that main() calls logging.basicConfig()."""
     with patch("revlo.cli.logging.basicConfig") as mock_logging:

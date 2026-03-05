@@ -1,16 +1,13 @@
-"""Test suite for datasheet spec extractor (US-017).
-
-All Anthropic API calls are fully mocked -- no real API traffic.
-"""
+"""Test suite for datasheet spec extractor (US-017)."""
 
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
+from revlo.config import DEFAULT_PROVIDER
 from revlo.datasheet.extractor import _MAX_TOKENS, _MODEL, extract_spec
 from revlo.datasheet.models import DatasheetSpec, PinFunction
 
@@ -18,26 +15,6 @@ from revlo.datasheet.models import DatasheetSpec, PinFunction
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _make_tool_use_block(spec_input: dict):
-    """Create a mock tool_use content block with DatasheetSpec input."""
-    return SimpleNamespace(
-        type="tool_use",
-        id="toolu_test",
-        name="record_datasheet_spec",
-        input=spec_input,
-    )
-
-
-def _make_api_response(spec_input: dict):
-    """Create a mock API response with a tool_use content block."""
-    return SimpleNamespace(content=[_make_tool_use_block(spec_input)])
-
-
-def _make_text_only_response(text: str):
-    """Create a mock API response with only a text block (no tool_use)."""
-    return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
-
-
 def _valid_spec_dict(**overrides) -> dict:
     """Return a minimal valid DatasheetSpec dict."""
     base = {
@@ -73,12 +50,10 @@ class TestSuccessfulExtraction:
         pdf_text = "STM32F103CBT6 datasheet text..."
         mpn = "STM32F103CBT6"
         spec_data = _valid_spec_dict()
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
+        with patch(
+            "revlo.datasheet.extractor.generate_structured",
+            return_value=DatasheetSpec.model_validate(spec_data),
+        ):
             result = await extract_spec(pdf_text, mpn)
 
         assert isinstance(result, DatasheetSpec)
@@ -100,12 +75,10 @@ class TestSuccessfulExtraction:
         pdf_text = "Minimal datasheet..."
         mpn = "TEST123"
         spec_data = {"mpn": "TEST123"}
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
+        with patch(
+            "revlo.datasheet.extractor.generate_structured",
+            return_value=DatasheetSpec.model_validate(spec_data),
+        ):
             result = await extract_spec(pdf_text, mpn)
 
         assert isinstance(result, DatasheetSpec)
@@ -131,10 +104,10 @@ class TestErrorHandling:
         pdf_text = "Some datasheet text..."
         mpn = "STM32F103CBT6"
 
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(side_effect=Exception("API unavailable"))
-            MockClient.return_value.messages.create = mock_create
-
+        with patch(
+            "revlo.datasheet.extractor.generate_structured",
+            side_effect=Exception("API unavailable"),
+        ):
             with caplog.at_level(logging.WARNING):
                 result = await extract_spec(pdf_text, mpn)
 
@@ -147,17 +120,12 @@ class TestErrorHandling:
         """Response with no tool_use block should return None."""
         pdf_text = "Datasheet text..."
         mpn = "STM32F103CBT6"
-        response = _make_text_only_response("I cannot extract specs")
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
+        with patch("revlo.datasheet.extractor.generate_structured", return_value=None):
             with caplog.at_level(logging.WARNING):
                 result = await extract_spec(pdf_text, mpn)
 
         assert result is None
-        assert "No tool_use block" in caplog.text
+        assert "Structured extraction returned no result" in caplog.text
         assert "STM32F103CBT6" in caplog.text
 
     @pytest.mark.asyncio
@@ -165,19 +133,12 @@ class TestErrorHandling:
         """Malformed tool input that fails validation should return None."""
         pdf_text = "Datasheet text..."
         mpn = "STM32F103CBT6"
-        # Missing required 'mpn' field
-        spec_data = {"manufacturer": "Test Corp"}
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
+        with patch("revlo.datasheet.extractor.generate_structured", return_value=None):
             with caplog.at_level(logging.WARNING):
                 result = await extract_spec(pdf_text, mpn)
 
         assert result is None
-        assert "Failed to validate DatasheetSpec" in caplog.text
+        assert "Structured extraction returned no result" in caplog.text
         assert "STM32F103CBT6" in caplog.text
 
 
@@ -191,19 +152,16 @@ class TestTextTruncation:
         # Create text longer than limit
         long_text = "A" * 150_000
         mpn = "STM32F103CBT6"
-        spec_data = _valid_spec_dict()
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
+        with patch(
+            "revlo.datasheet.extractor.generate_structured",
+            return_value=DatasheetSpec.model_validate(_valid_spec_dict()),
+        ) as mock_generate_structured:
             result = await extract_spec(long_text, mpn)
 
         assert result is not None
         # Verify the truncated text was used in the prompt
-        call_args = mock_create.call_args
-        user_message = call_args.kwargs["messages"][0]["content"]
+        call_args = mock_generate_structured.call_args
+        user_message = call_args.kwargs["user_prompt"]
         # The prompt should contain truncated text (100K chars), not the full 150K
         assert len(user_message) < len(long_text)
         # Verify it's around 100K + prompt template overhead
@@ -219,49 +177,35 @@ class TestAPIParameters:
         """Verify model, max_tokens, system, user message, tools, and tool_choice."""
         pdf_text = "Custom datasheet content for testing"
         mpn = "CUSTOM123"
-        spec_data = _valid_spec_dict(mpn="CUSTOM123")
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
+        with patch(
+            "revlo.datasheet.extractor.generate_structured",
+            return_value=DatasheetSpec.model_validate(_valid_spec_dict(mpn="CUSTOM123")),
+        ) as mock_generate_structured:
             await extract_spec(pdf_text, mpn)
 
-        call_args = mock_create.call_args
+        call_args = mock_generate_structured.call_args
 
-        # Model
+        # Provider/model
+        assert call_args.kwargs["provider"] == DEFAULT_PROVIDER
         assert call_args.kwargs["model"] == _MODEL
-        assert call_args.kwargs["model"] == "claude-haiku-4-5-20251001"
 
         # Max tokens
-        assert call_args.kwargs["max_tokens"] == _MAX_TOKENS
-        assert call_args.kwargs["max_tokens"] == 4096
+        assert call_args.kwargs["max_output_tokens"] == _MAX_TOKENS
+        assert call_args.kwargs["max_output_tokens"] == 4096
 
         # System prompt
-        assert "system" in call_args.kwargs
-        assert "expert electronics engineer" in call_args.kwargs["system"].lower()
+        assert "system_prompt" in call_args.kwargs
+        assert "expert electronics engineer" in call_args.kwargs["system_prompt"].lower()
 
         # User message contains MPN and PDF text
-        messages = call_args.kwargs["messages"]
-        assert len(messages) == 1
-        assert messages[0]["role"] == "user"
-        user_content = messages[0]["content"]
+        user_content = call_args.kwargs["user_prompt"]
         assert "CUSTOM123" in user_content
         assert "Custom datasheet content for testing" in user_content
 
-        # Tools parameter
-        assert "tools" in call_args.kwargs
-        tools = call_args.kwargs["tools"]
-        assert len(tools) == 1
-        assert tools[0]["name"] == "record_datasheet_spec"
-        assert "input_schema" in tools[0]
-
-        # Tool choice forces the tool
-        assert "tool_choice" in call_args.kwargs
-        tool_choice = call_args.kwargs["tool_choice"]
-        assert tool_choice["type"] == "tool"
-        assert tool_choice["name"] == "record_datasheet_spec"
+        # Structured-output parameters
+        assert call_args.kwargs["schema_model"] is DatasheetSpec
+        assert call_args.kwargs["tool_name"] == "record_datasheet_spec"
+        assert "structured specifications" in call_args.kwargs["tool_description"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -296,12 +240,10 @@ class TestEdgeCases:
                 },
             ],
         )
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
+        with patch(
+            "revlo.datasheet.extractor.generate_structured",
+            return_value=DatasheetSpec.model_validate(spec_data),
+        ):
             result = await extract_spec(pdf_text, mpn)
 
         assert len(result.pin_functions) == 3
@@ -323,12 +265,10 @@ class TestEdgeCases:
             "supply_voltage_max": None,
             "max_current": None,
         }
-        response = _make_api_response(spec_data)
-
-        with patch("revlo.datasheet.extractor.anthropic.AsyncAnthropic") as MockClient:
-            mock_create = AsyncMock(return_value=response)
-            MockClient.return_value.messages.create = mock_create
-
+        with patch(
+            "revlo.datasheet.extractor.generate_structured",
+            return_value=DatasheetSpec.model_validate(spec_data),
+        ):
             result = await extract_spec(pdf_text, mpn)
 
         assert result.supply_voltage_min is None

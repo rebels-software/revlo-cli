@@ -1,14 +1,11 @@
-"""Test suite for the async review engine (US-010).
-
-All Claude API calls are fully mocked -- no real API traffic.
-"""
+"""Test suite for the async review engine (US-010)."""
 
 from __future__ import annotations
 
 import datetime
 import json
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -20,10 +17,8 @@ from revlo.parser.models import (
     PinConnection,
     TitleBlockInfo,
 )
-from revlo.config import DEFAULT_MODEL, MODEL_OPUS, MODEL_SONNET
 from revlo.reviewer.engine import (
     _build_summary,
-    _review_chunk_generic,
     review_schematic,
 )
 from revlo.reviewer.models import (
@@ -125,8 +120,20 @@ def _mock_review_with_ee_agent(findings: list[Finding] | None = None):
     if findings is None:
         findings = [Finding(**_valid_finding_dict())]
 
-    async def _mock_impl(chunks, system_prompt, model):
+    async def _mock_impl(chunks, system_prompt, provider, model):
         return list(findings)
+
+    return _mock_impl
+
+
+def _mock_generate_text_responses(*responses: str):
+    """Return a side effect for generate_text that yields canned responses."""
+    queue = list(responses)
+
+    async def _mock_impl(**kwargs):
+        if not queue:
+            raise AssertionError("generate_text called more times than expected")
+        return queue.pop(0)
 
     return _mock_impl
 
@@ -189,7 +196,7 @@ class TestReviewSchematic:
         """EE agent returns no findings and fallback also empty produces empty report."""
         schematic = _make_schematic()
 
-        async def _mock_chunk_generic(chunk, model):
+        async def _mock_chunk_generic(chunk, provider, model):
             return []
 
         with patch(
@@ -270,18 +277,6 @@ class TestReExport:
         assert "review_schematic" in pkg.__all__
 
 
-# ---------------------------------------------------------------------------
-# Per-chunk generic fallback
-# ---------------------------------------------------------------------------
-def _mock_anthropic_response(text: str):
-    """Build a mock Anthropic messages.create response with given text."""
-    content_block = MagicMock()
-    content_block.text = text
-    response = MagicMock()
-    response.content = [content_block]
-    return response
-
-
 class TestGenericFallback:
     """Test that per-chunk generic review is triggered when the EE agent fails."""
 
@@ -292,33 +287,21 @@ class TestGenericFallback:
         finding_dict = _valid_finding_dict()
         generic_response_json = json.dumps([finding_dict])
 
-        # EE agent returns garbage text (not JSON).
-        ee_response = _mock_anthropic_response("This is not valid JSON at all.")
-        # Generic fallback returns valid findings.
-        generic_response = _mock_anthropic_response(generic_response_json)
-
-        call_count = 0
-
-        async def _fake_create(**kwargs):
-            nonlocal call_count
-            call_count += 1
-            # First call is the EE agent (has system= kwarg).
-            if "system" in kwargs:
-                return ee_response
-            # Subsequent calls are per-chunk generic review.
-            return generic_response
-
-        mock_client = MagicMock()
-        mock_client.messages.create = _fake_create
-
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+        with patch(
+            "revlo.reviewer.engine.generate_text",
+            side_effect=_mock_generate_text_responses(
+                "This is not valid JSON at all.",
+                generic_response_json,
+                generic_response_json,
+            ),
+        ) as mock_generate_text:
             report = await review_schematic(schematic)
 
         # The fallback should have produced findings.
         assert len(report.findings) > 0
         assert report.findings[0].category == "decoupling"
         # Should have been called more than once (EE + at least 1 fallback chunk).
-        assert call_count >= 2
+        assert mock_generate_text.await_count >= 2
 
     @pytest.mark.asyncio
     async def test_no_fallback_when_ee_succeeds(self):
@@ -327,24 +310,15 @@ class TestGenericFallback:
         finding_dict = _valid_finding_dict()
         ee_response_json = json.dumps([finding_dict])
 
-        ee_response = _mock_anthropic_response(ee_response_json)
-
-        call_count = 0
-
-        async def _fake_create(**kwargs):
-            nonlocal call_count
-            call_count += 1
-            return ee_response
-
-        mock_client = MagicMock()
-        mock_client.messages.create = _fake_create
-
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+        with patch(
+            "revlo.reviewer.engine.generate_text",
+            side_effect=_mock_generate_text_responses(ee_response_json),
+        ) as mock_generate_text:
             report = await review_schematic(schematic)
 
         assert len(report.findings) > 0
         # Only the single EE agent call, no fallback.
-        assert call_count == 1
+        assert mock_generate_text.await_count == 1
 
     @pytest.mark.asyncio
     async def test_fallback_with_dict_findings_format(self):
@@ -353,18 +327,14 @@ class TestGenericFallback:
         finding_dict = _valid_finding_dict()
         generic_response_json = json.dumps({"findings": [finding_dict]})
 
-        ee_response = _mock_anthropic_response("not json")
-        generic_response = _mock_anthropic_response(generic_response_json)
-
-        async def _fake_create(**kwargs):
-            if "system" in kwargs:
-                return ee_response
-            return generic_response
-
-        mock_client = MagicMock()
-        mock_client.messages.create = _fake_create
-
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+        with patch(
+            "revlo.reviewer.engine.generate_text",
+            side_effect=_mock_generate_text_responses(
+                "not json",
+                generic_response_json,
+                generic_response_json,
+            ),
+        ):
             report = await review_schematic(schematic)
 
         assert len(report.findings) > 0
@@ -379,19 +349,10 @@ class TestDebugLogging:
         schematic = _make_schematic()
         garbage_text = "TRUNCATED JSON: {findings: [incomplete..."
 
-        ee_response = _mock_anthropic_response(garbage_text)
-        # Generic fallback also returns empty to avoid masking the log.
-        generic_response = _mock_anthropic_response("[]")
-
-        async def _fake_create(**kwargs):
-            if "system" in kwargs:
-                return ee_response
-            return generic_response
-
-        mock_client = MagicMock()
-        mock_client.messages.create = _fake_create
-
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+        with patch(
+            "revlo.reviewer.engine.generate_text",
+            side_effect=_mock_generate_text_responses(garbage_text, "[]", "[]"),
+        ):
             with caplog.at_level(logging.WARNING, logger="revlo.reviewer.engine"):
                 await review_schematic(schematic)
 
@@ -407,18 +368,10 @@ class TestDebugLogging:
         """Info log is emitted when falling back to per-chunk review."""
         schematic = _make_schematic()
 
-        ee_response = _mock_anthropic_response("no json here")
-        generic_response = _mock_anthropic_response("[]")
-
-        async def _fake_create(**kwargs):
-            if "system" in kwargs:
-                return ee_response
-            return generic_response
-
-        mock_client = MagicMock()
-        mock_client.messages.create = _fake_create
-
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+        with patch(
+            "revlo.reviewer.engine.generate_text",
+            side_effect=_mock_generate_text_responses("no json here", "[]", "[]"),
+        ):
             with caplog.at_level(logging.INFO, logger="revlo.reviewer.engine"):
                 await review_schematic(schematic)
 

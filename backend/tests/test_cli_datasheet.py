@@ -94,7 +94,7 @@ def mock_datasheet_specs() -> dict[str, DatasheetSpec]:
 def fixture_path() -> str:
     """Return the path to the test fixture .kicad_sch file."""
     return str(
-        Path(__file__).parent / "fixtures" / "STM32F103CBT8_Devel.kicad_sch"
+        Path(__file__).parent / "fixtures" / "simello.kicad_sch"
     )
 
 
@@ -124,7 +124,7 @@ def test_skip_datasheet_flag_defaults_to_false():
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
 @patch("revlo.cli.asyncio.run")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_enrichment_pipeline_called_by_default(
     mock_asyncio_run: MagicMock,
     mock_markdown: MagicMock,
@@ -170,7 +170,7 @@ def test_enrichment_pipeline_called_by_default(
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
 @patch("revlo.cli.asyncio.run")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_skip_datasheet_flag_skips_enrichment(
     mock_asyncio_run: MagicMock,
     mock_markdown: MagicMock,
@@ -202,7 +202,7 @@ def test_skip_datasheet_flag_skips_enrichment(
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
 @patch("revlo.cli.asyncio.run")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_enrichment_failure_degrades_gracefully(
     mock_asyncio_run: MagicMock,
     mock_markdown: MagicMock,
@@ -241,7 +241,7 @@ def test_enrichment_failure_degrades_gracefully(
 @patch("revlo.cli.review_schematic")
 @patch("revlo.cli.generate_markdown_report")
 @patch("revlo.cli.asyncio.run")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_cache_dir_defaults_to_parent_datasheets(
     mock_asyncio_run: MagicMock,
     mock_markdown: MagicMock,
@@ -276,7 +276,7 @@ def test_cache_dir_defaults_to_parent_datasheets(
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.generate_markdown_report")
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_specs_passed_to_review_schematic_via_asyncio_run(
     mock_markdown: MagicMock,
     mock_parse: MagicMock,
@@ -293,8 +293,15 @@ def test_specs_passed_to_review_schematic_via_asyncio_run(
     review_schematic_kwargs = {}
 
     # Mock review_schematic to capture its arguments
-    async def mock_review_schematic_impl(schematic, model=None, datasheet_specs=None, min_confidence=0.5):
+    async def mock_review_schematic_impl(
+        schematic,
+        provider=None,
+        model=None,
+        datasheet_specs=None,
+        min_confidence=0.5,
+    ):
         review_schematic_kwargs["schematic"] = schematic
+        review_schematic_kwargs["provider"] = provider
         review_schematic_kwargs["model"] = model
         review_schematic_kwargs["datasheet_specs"] = datasheet_specs
         review_schematic_kwargs["min_confidence"] = min_confidence

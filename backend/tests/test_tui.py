@@ -423,7 +423,7 @@ class TestCLITuiIntegration:
     @patch("revlo.cli.parse_schematic")
     @patch("revlo.cli.review_schematic")
     @patch("revlo.cli.generate_markdown_report")
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     def test_json_flag_skips_tui(
         self,
         mock_markdown: MagicMock,
@@ -438,7 +438,7 @@ class TestCLITuiIntegration:
         from revlo.parser.models import ParsedSchematic, TitleBlockInfo
 
         fixture_path = str(
-            Path(__file__).parent / "fixtures" / "STM32F103CBT8_Devel.kicad_sch"
+            Path(__file__).parent / "fixtures" / "simello.kicad_sch"
         )
         mock_parse.return_value = ParsedSchematic(
             components=[], nets=[],
@@ -459,7 +459,7 @@ class TestCLITuiIntegration:
     @patch("revlo.cli.parse_schematic")
     @patch("revlo.cli.review_schematic")
     @patch("revlo.cli.generate_markdown_report")
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     def test_output_flag_skips_tui(
         self,
         mock_markdown: MagicMock,
@@ -474,7 +474,7 @@ class TestCLITuiIntegration:
         from revlo.parser.models import ParsedSchematic, TitleBlockInfo
 
         fixture_path = str(
-            Path(__file__).parent / "fixtures" / "STM32F103CBT8_Devel.kicad_sch"
+            Path(__file__).parent / "fixtures" / "simello.kicad_sch"
         )
         mock_parse.return_value = ParsedSchematic(
             components=[], nets=[],
@@ -495,7 +495,7 @@ class TestCLITuiIntegration:
     @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
     @patch("revlo.cli.parse_schematic")
     @patch("revlo.cli.review_schematic")
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     def test_no_tui_flag_skips_tui(
         self,
         mock_review: AsyncMock,
@@ -509,7 +509,7 @@ class TestCLITuiIntegration:
         from revlo.parser.models import ParsedSchematic, TitleBlockInfo
 
         fixture_path = str(
-            Path(__file__).parent / "fixtures" / "STM32F103CBT8_Devel.kicad_sch"
+            Path(__file__).parent / "fixtures" / "simello.kicad_sch"
         )
         mock_parse.return_value = ParsedSchematic(
             components=[], nets=[],
@@ -532,7 +532,7 @@ class TestCLITuiIntegration:
     @patch("revlo.cli.parse_schematic")
     @patch("revlo.cli.review_schematic")
     @patch("revlo.tui.RevloApp.run")
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     def test_default_launches_tui(
         self,
         mock_tui_run: MagicMock,
@@ -546,7 +546,7 @@ class TestCLITuiIntegration:
         from revlo.parser.models import ParsedSchematic, TitleBlockInfo
 
         fixture_path = str(
-            Path(__file__).parent / "fixtures" / "STM32F103CBT8_Devel.kicad_sch"
+            Path(__file__).parent / "fixtures" / "simello.kicad_sch"
         )
         mock_parse.return_value = ParsedSchematic(
             components=[], nets=[],
