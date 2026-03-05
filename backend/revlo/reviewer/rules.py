@@ -226,6 +226,73 @@ class I2CBusPullupRule:
 
 
 @dataclass(slots=True)
+class LibraryHygieneRule:
+    name: str = "library_hygiene"
+
+    def evaluate(self, schematic: ParsedSchematic) -> list[Finding]:
+        findings: list[Finding] = []
+        ref_counts: dict[str, int] = {}
+        for component in schematic.components:
+            ref_counts[component.reference.upper()] = ref_counts.get(component.reference.upper(), 0) + 1
+
+        for component in schematic.components:
+            evidence = FindingEvidence(
+                refs=[component.reference],
+                sheet_paths=[component.source_sheet] if component.source_sheet else [],
+            )
+            ref_upper = component.reference.upper()
+            if ref_counts[ref_upper] > 1:
+                findings.append(
+                    Finding(
+                        severity=Severity.error,
+                        category=FindingCategory.library_hygiene,
+                        component_ref=component.reference,
+                        title="Duplicate reference designator",
+                        description=(
+                            f"Reference {component.reference} appears multiple times in the schematic."
+                        ),
+                        recommendation="Assign unique reference designators before review or manufacturing export.",
+                        confidence=0.99,
+                        source_type=FindingSourceType.deterministic,
+                        evidence=evidence,
+                    )
+                )
+            if not component.value.strip():
+                findings.append(
+                    Finding(
+                        severity=Severity.warning,
+                        category=FindingCategory.library_hygiene,
+                        component_ref=component.reference,
+                        title="Missing component value",
+                        description=(
+                            f"Component {component.reference} has no value field."
+                        ),
+                        recommendation="Populate the value field so reviews, BOMs, and assembly outputs stay traceable.",
+                        confidence=0.95,
+                        source_type=FindingSourceType.deterministic,
+                        evidence=evidence,
+                    )
+                )
+            if _is_active_component(component) and not component.footprint.strip():
+                findings.append(
+                    Finding(
+                        severity=Severity.warning,
+                        category=FindingCategory.library_hygiene,
+                        component_ref=component.reference,
+                        title="Missing footprint",
+                        description=(
+                            f"Active component {component.reference} has no footprint assigned."
+                        ),
+                        recommendation="Assign the intended PCB footprint before layout handoff.",
+                        confidence=0.97,
+                        source_type=FindingSourceType.deterministic,
+                        evidence=evidence,
+                    )
+                )
+        return findings
+
+
+@dataclass(slots=True)
 class DeterministicRuleEngine:
     """Small coordinator for deterministic review rules."""
 
@@ -263,6 +330,7 @@ def run_deterministic_checks(
             PowerConnectivityRule(),
             DecouplingPresenceRule(),
             I2CBusPullupRule(),
+            LibraryHygieneRule(),
         )
     )
     return resolved_engine.evaluate(schematic)

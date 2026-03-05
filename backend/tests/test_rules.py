@@ -17,6 +17,7 @@ from revlo.reviewer.rules import (
     DecouplingPresenceRule,
     DeterministicRuleEngine,
     I2CBusPullupRule,
+    LibraryHygieneRule,
     PowerConnectivityRule,
     resolve_deterministic_checks_enabled,
     run_deterministic_checks,
@@ -139,3 +140,22 @@ def test_run_deterministic_checks_includes_builtin_findings():
     assert "power" in categories
     assert "decoupling" in categories
     assert "pull_up" in categories
+
+
+def test_library_hygiene_rule_reports_duplicate_refs_and_missing_fields():
+    schematic = ParsedSchematic(
+        components=[
+            ParsedComponent(reference="U1", value="", lib_id="MCU:TEST", footprint=""),
+            ParsedComponent(reference="U1", value="Regulator", lib_id="Reg:TEST", footprint="SOT-223"),
+        ],
+        title_block=TitleBlockInfo(title="Rule Test"),
+    )
+
+    findings = LibraryHygieneRule().evaluate(schematic)
+
+    titles = {finding.title for finding in findings}
+    categories = {finding.category.value for finding in findings}
+    assert "library_hygiene" in categories
+    assert "Duplicate reference designator" in titles
+    assert "Missing component value" in titles
+    assert "Missing footprint" in titles

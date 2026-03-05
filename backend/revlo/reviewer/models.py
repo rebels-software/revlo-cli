@@ -28,6 +28,7 @@ class FindingCategory(StrEnum):
     component_value = "component_value"
     connectivity = "connectivity"
     thermal = "thermal"
+    library_hygiene = "library_hygiene"
 
 
 class FindingSourceType(StrEnum):
