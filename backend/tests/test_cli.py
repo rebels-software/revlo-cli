@@ -106,6 +106,7 @@ def test_build_parser_creates_review_subcommand():
     assert args.output is None
     assert args.json_output is False
     assert args.no_tui is False
+    assert args.profile is None
 
 
 def test_build_parser_creates_check_subcommand():
@@ -116,6 +117,13 @@ def test_build_parser_creates_check_subcommand():
     assert args.path == "test.kicad_sch"
     assert args.json_output is False
     assert args.min_confidence == 0.5
+    assert args.profile is None
+
+
+def test_build_parser_with_profile_flag():
+    parser = _build_parser()
+    args = parser.parse_args(["review", "test.kicad_sch", "--profile", "generic"])
+    assert args.profile == "generic"
 
 
 def test_build_parser_with_output_flag():
@@ -660,6 +668,17 @@ def test_run_review_auto_saves(
         _run_review(args)
 
     mock_save.assert_called_once_with(mock_review_report, fixture_path)
+    assert mock_review_report.review_profile == "generic"
+
+
+def test_run_review_invalid_profile_exits(fixture_path: str):
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+        args = _build_parser().parse_args(
+            ["review", fixture_path, "--profile", "sensor-node"]
+        )
+        with pytest.raises(SystemExit) as exc:
+            _run_review(args)
+        assert exc.value.code == 1
 
 
 # ---------------------------------------------------------------------------

@@ -80,6 +80,7 @@ class ReviewReport(BaseModel):
     llm_provider: str = ""
     llm_model: str = ""
     datasheet_mode: str = ""
+    review_profile: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property

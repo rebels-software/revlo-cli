@@ -21,7 +21,7 @@ class HistoryEntry:
     summary: str
 
 
-_REVIEW_META_KEYS = ("llm_provider", "llm_model", "datasheet_mode")
+_REVIEW_META_KEYS = ("llm_provider", "llm_model", "datasheet_mode", "review_profile")
 
 
 def _hydrate_review_payload(data: dict, meta: dict) -> dict:

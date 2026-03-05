@@ -40,6 +40,8 @@ DEFAULT_ANTHROPIC_EXTRACTION_MODEL = MODEL_HAIKU
 DEFAULT_ANTHROPIC_ASK_MODEL = MODEL_OPUS
 
 DEFAULT_DATASHEET_CONCURRENCY = 4
+DEFAULT_REVIEW_PROFILE = "generic"
+_VALID_REVIEW_PROFILES = {DEFAULT_REVIEW_PROFILE}
 
 
 def _resolve_config_path() -> Path | None:
@@ -77,6 +79,12 @@ def _load_toml_config() -> dict[str, Any]:
 def _llm_config() -> dict[str, Any]:
     """Return the ``[llm]`` table from ``revlo.toml`` if present."""
     data = _load_toml_config().get("llm", {})
+    return data if isinstance(data, dict) else {}
+
+
+def _review_config() -> dict[str, Any]:
+    """Return the ``[review]`` table from ``revlo.toml`` if present."""
+    data = _load_toml_config().get("review", {})
     return data if isinstance(data, dict) else {}
 
 
@@ -219,3 +227,20 @@ def resolve_datasheet_concurrency() -> int:
         return max(1, int(raw))
     except ValueError:
         return DEFAULT_DATASHEET_CONCURRENCY
+
+
+def resolve_review_profile(override: str | None = None) -> str:
+    """Resolve the active review profile from override, env, config, or default."""
+    raw = (
+        override
+        or os.environ.get("REVLO_REVIEW_PROFILE")
+        or _review_config().get("profile")
+        or DEFAULT_REVIEW_PROFILE
+    )
+    value = str(raw).strip().lower()
+    if value not in _VALID_REVIEW_PROFILES:
+        valid = ", ".join(sorted(_VALID_REVIEW_PROFILES))
+        raise ValueError(
+            f"Unknown review profile '{value}'. Valid profiles: {valid}"
+        )
+    return value

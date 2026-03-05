@@ -16,6 +16,7 @@ from rich.status import Status
 from revlo import __version__
 from revlo.config import (
     required_api_key_env,
+    resolve_review_profile,
     resolve_provider,
     resolve_review_model,
 )
@@ -78,6 +79,11 @@ def _add_review_args(parser: argparse.ArgumentParser) -> None:
         default=0.5,
         dest="min_confidence",
         help="Minimum confidence threshold for findings (0.0-1.0, default: 0.5)",
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="Review profile override (default: generic)",
     )
 
 
@@ -187,6 +193,11 @@ def _run_review(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     provider = resolve_provider()
+    try:
+        review_profile = resolve_review_profile(args.profile)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     api_key_env = required_api_key_env(provider)
 
     if not os.environ.get(api_key_env):
@@ -357,6 +368,7 @@ def _run_review(args: argparse.Namespace) -> None:
     report.llm_provider = str(provider)
     report.llm_model = model
     report.datasheet_mode = "full" if datasheet_enabled else "fast"
+    report.review_profile = review_profile
 
     # Auto-save review
     from revlo.storage import save_review

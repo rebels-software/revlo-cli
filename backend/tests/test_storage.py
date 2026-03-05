@@ -138,6 +138,7 @@ def test_save_review_persists_review_metadata_fields(
     sample_report.llm_provider = "openai"
     sample_report.llm_model = "gpt-5.4"
     sample_report.datasheet_mode = "full"
+    sample_report.review_profile = "generic"
 
     saved = save_review(sample_report, str(fake_schematic))
     data = json.loads(saved.read_text())
@@ -145,9 +146,11 @@ def test_save_review_persists_review_metadata_fields(
     assert data["llm_provider"] == "openai"
     assert data["llm_model"] == "gpt-5.4"
     assert data["datasheet_mode"] == "full"
+    assert data["review_profile"] == "generic"
     assert data["_meta"]["llm_provider"] == "openai"
     assert data["_meta"]["llm_model"] == "gpt-5.4"
     assert data["_meta"]["datasheet_mode"] == "full"
+    assert data["_meta"]["review_profile"] == "generic"
 
 
 def test_save_review_idempotent_dir(
@@ -222,6 +225,7 @@ def test_load_latest_review_backfills_metadata_from_meta_only(
         "llm_provider": "anthropic",
         "llm_model": "claude-opus-4-6",
         "datasheet_mode": "fast",
+        "review_profile": "generic",
     }
     (revlo_dir / "board-review-20260212T120000.json").write_text(
         json.dumps(data, indent=2)
@@ -233,6 +237,7 @@ def test_load_latest_review_backfills_metadata_from_meta_only(
     assert report.llm_provider == "anthropic"
     assert report.llm_model == "claude-opus-4-6"
     assert report.datasheet_mode == "fast"
+    assert report.review_profile == "generic"
     assert meta["llm_provider"] == "anthropic"
 
 
