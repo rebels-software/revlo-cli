@@ -661,3 +661,114 @@ def _find_reset_chain(
             lines.append(f"  Control path: {', '.join(sorted(controls))}")
 
     return "\n".join(lines)
+
+
+def _find_boot_straps(ref: str, schematic: ParsedSchematic) -> str:
+    """Identify likely boot or mode pins and attached pull networks."""
+    component = _find_component(schematic, ref)
+    if component is None:
+        return f"Component '{ref}' not found in schematic."
+
+    candidate_pins = [
+        pin for pin in component.pins
+        if pin.connected_net and any(
+            token in pin.name.upper()
+            for token in ("BOOT", "MODE", "CFG", "SEL", "STRAP")
+        )
+    ]
+    if not candidate_pins:
+        return f"No likely boot or mode pins found on {component.reference}."
+
+    lines = [f"Boot strap investigation for {component.reference}:"]
+    net_lookup = _build_net_lookup(schematic)
+    component_lookup = _build_component_lookup(schematic)
+    for pin in candidate_pins:
+        lines.append(f"Pin {pin.number} ({pin.name}) -> net {pin.connected_net}")
+        net = net_lookup.get(pin.connected_net.upper())
+        if net is None:
+            continue
+        pull_parts: list[str] = []
+        for connection in net.pins:
+            if connection.component_ref.upper() == component.reference.upper():
+                continue
+            candidate = component_lookup.get(connection.component_ref.upper())
+            if candidate is None or not _is_resistor(candidate):
+                continue
+            other_nets = sorted(
+                {
+                    other_net
+                    for other_net in _component_nets(candidate)
+                    if other_net and other_net.upper() != net.name.upper()
+                }
+            )
+            target_desc = ", ".join(other_nets) if other_nets else "other net unknown"
+            pull_parts.append(f"{candidate.reference} -> {target_desc}")
+        if pull_parts:
+            lines.append(f"  Observed pull network: {', '.join(sorted(pull_parts))}")
+        else:
+            lines.append("  Observed pull network: none identified")
+    return "\n".join(lines)
+
+
+_INTERFACE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "USB": ("USB", "DP", "DM", "D+", "D-", "VBUS", "CC", "SBU"),
+    "I2C": ("I2C", "SCL", "SDA"),
+    "SPI": ("SPI", "MOSI", "MISO", "SCK", "CS", "NSS"),
+    "UART": ("UART", "USART", "TX", "RX", "RTS", "CTS"),
+    "CAN": ("CAN", "CANH", "CANL", "TXD", "RXD"),
+}
+
+
+def _find_interface_bundle(interface_type: str, schematic: ParsedSchematic) -> str:
+    """Group likely nets and refs for one interface family."""
+    interface_key = interface_type.strip().upper()
+    patterns = _INTERFACE_PATTERNS.get(interface_key)
+    if not patterns:
+        return f"Unsupported interface type '{interface_type}'."
+
+    matching_nets: list[ParsedNet] = []
+    for net in schematic.nets:
+        haystacks = [net.name.upper(), *(label.upper() for label in net.labels)]
+        if any(pattern in haystack for pattern in patterns for haystack in haystacks):
+            matching_nets.append(net)
+
+    if not matching_nets:
+        return f"No likely {interface_key} nets found."
+
+    lines = [f"{interface_key} interface bundle:"]
+    for net in sorted(matching_nets, key=lambda item: item.name):
+        refs = sorted({pin.component_ref for pin in net.pins})
+        labels = f" labels={', '.join(net.labels)}" if net.labels else ""
+        lines.append(f"  {net.name}{labels}: {', '.join(refs)}")
+    return "\n".join(lines)
+
+
+def _compare_two_refs(
+    ref_a: str,
+    ref_b: str,
+    schematic: ParsedSchematic,
+) -> str:
+    """Compare two components by metadata and connected nets."""
+    component_a = _find_component(schematic, ref_a)
+    if component_a is None:
+        return f"Component '{ref_a}' not found in schematic."
+    component_b = _find_component(schematic, ref_b)
+    if component_b is None:
+        return f"Component '{ref_b}' not found in schematic."
+
+    nets_a = set(_component_nets(component_a))
+    nets_b = set(_component_nets(component_b))
+    common_nets = sorted(net for net in nets_a & nets_b if net)
+    only_a = sorted(net for net in nets_a - nets_b if net)
+    only_b = sorted(net for net in nets_b - nets_a if net)
+
+    lines = [
+        f"Comparing {component_a.reference} and {component_b.reference}:",
+        f"  {component_a.reference}: value={component_a.value}, footprint={component_a.footprint or '-'}, sheet={component_a.source_sheet or '-'}",
+        f"  {component_b.reference}: value={component_b.value}, footprint={component_b.footprint or '-'}, sheet={component_b.source_sheet or '-'}",
+        f"  Pin counts: {component_a.reference}={len(component_a.pins)}, {component_b.reference}={len(component_b.pins)}",
+        f"  Shared nets: {', '.join(common_nets) if common_nets else 'none'}",
+        f"  Nets only on {component_a.reference}: {', '.join(only_a) if only_a else 'none'}",
+        f"  Nets only on {component_b.reference}: {', '.join(only_b) if only_b else 'none'}",
+    ]
+    return "\n".join(lines)

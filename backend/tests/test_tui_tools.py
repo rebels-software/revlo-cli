@@ -244,3 +244,41 @@ def test_find_reset_chain_finds_reset_net_and_pulls():
     assert "Observed refs: R1, SW1, U1" in result
     assert "Pull network: R1 -> +3V3" in result
     assert "Control path: SW1 -> GND" in result
+
+
+def test_find_boot_straps_reports_boot_pin_and_pull():
+    result = execute_tool(
+        "find_boot_straps",
+        {"ref": "U1"},
+        _make_investigation_schematic(),
+    )
+
+    assert "Boot strap investigation for U1" in result
+    assert "Pin 3 (BOOT0) -> net BOOT0" in result
+    assert "Observed pull network: R2 -> GND" in result
+
+
+def test_find_interface_bundle_groups_matching_nets():
+    result = execute_tool(
+        "find_interface_bundle",
+        {"interface_type": "USB"},
+        _make_investigation_schematic(),
+    )
+
+    assert "USB interface bundle" in result
+    assert "USB_D+" in result
+    assert "USB_D-" in result
+    assert "J1, U1" in result
+
+
+def test_compare_two_refs_summarizes_shared_and_unique_nets():
+    result = execute_tool(
+        "compare_two_refs",
+        {"ref_a": "U1", "ref_b": "U3"},
+        _make_investigation_schematic(),
+    )
+
+    assert "Comparing U1 and U3" in result
+    assert "Pin counts: U1=8, U3=2" in result
+    assert "Shared nets: UART_RX, UART_TX" in result
+    assert "Nets only on U1: +3V3, BOOT0, GND, NRST, USB_D+, USB_D-" in result
