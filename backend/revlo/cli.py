@@ -14,6 +14,7 @@ from rich.progress import Progress, TextColumn
 from rich.status import Status
 
 from revlo import __version__
+from revlo.bom import load_bom
 from revlo.constraints import load_project_constraints
 from revlo.config import (
     required_api_key_env,
@@ -90,6 +91,11 @@ def _add_review_args(parser: argparse.ArgumentParser) -> None:
         "--constraints",
         default=None,
         help="Path to a project constraints JSON file (default: <schematic>.revlo-constraints.json)",
+    )
+    parser.add_argument(
+        "--bom",
+        default=None,
+        help="Path to a project BOM CSV file (default: <schematic>.revlo-bom.csv)",
     )
 
 
@@ -248,6 +254,15 @@ def _run_review(args: argparse.Namespace) -> None:
         print_step(console, f"Found {n_comps} components, {n_nets} nets")
 
     datasheet_enabled = args.full_review and not args.skip_datasheet
+    try:
+        bom = load_bom(path, args.bom)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if show_rich and bom is not None:
+        print_step(console, f"Loaded {len(bom.items)} BOM rows")
+
     try:
         project_constraints = load_project_constraints(path, args.constraints)
     except ValueError as exc:

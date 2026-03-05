@@ -134,6 +134,14 @@ def test_build_parser_with_constraints_flag():
     assert args.constraints == "constraints.json"
 
 
+def test_build_parser_with_bom_flag():
+    parser = _build_parser()
+    args = parser.parse_args(
+        ["review", "test.kicad_sch", "--bom", "board.csv"]
+    )
+    assert args.bom == "board.csv"
+
+
 def test_build_parser_with_output_flag():
     """Test --output flag."""
     parser = _build_parser()
@@ -681,6 +689,7 @@ def test_run_review_auto_saves(
 
 @patch("revlo.parser.netlist.try_export_netlist", return_value=None)
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
+@patch("revlo.cli.load_bom")
 @patch("revlo.cli.load_project_constraints")
 @patch("revlo.cli.parse_schematic")
 @patch("revlo.cli.review_schematic")
@@ -689,6 +698,7 @@ def test_run_review_threads_loaded_constraints(
     mock_review: AsyncMock,
     mock_parse: MagicMock,
     mock_load_constraints: MagicMock,
+    mock_load_bom: MagicMock,
     mock_save: MagicMock,
     mock_netlist: MagicMock,
     mock_parsed_schematic: ParsedSchematic,
@@ -697,6 +707,7 @@ def test_run_review_threads_loaded_constraints(
 ):
     mock_parse.return_value = mock_parsed_schematic
     mock_load_constraints.return_value = {"constraints": []}
+    mock_load_bom.return_value = None
 
     with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
         mock_asyncio_run.return_value = mock_review_report
@@ -705,6 +716,7 @@ def test_run_review_threads_loaded_constraints(
         )
         _run_review(args)
 
+    mock_load_bom.assert_called_once_with(fixture_path, None)
     mock_load_constraints.assert_called_once_with(fixture_path, "constraints.json")
     assert mock_review.call_args.kwargs["project_constraints"] == {"constraints": []}
 
