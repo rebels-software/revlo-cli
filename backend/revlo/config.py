@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import tomllib
 from enum import StrEnum
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(StrEnum):
@@ -36,9 +42,52 @@ DEFAULT_ANTHROPIC_ASK_MODEL = MODEL_OPUS
 DEFAULT_DATASHEET_CONCURRENCY = 4
 
 
+def _resolve_config_path() -> Path | None:
+    """Locate the active ``revlo.toml`` config file, if any."""
+    override = os.environ.get("REVLO_CONFIG")
+    if override:
+        path = Path(override).expanduser()
+        return path if path.exists() else None
+
+    cwd = Path.cwd().resolve()
+    candidates = [cwd, *cwd.parents]
+    for directory in candidates:
+        path = directory / "revlo.toml"
+        if path.exists():
+            return path
+    return None
+
+
+def _load_toml_config() -> dict[str, Any]:
+    """Load ``revlo.toml`` if present, otherwise return an empty config."""
+    path = _resolve_config_path()
+    if path is None:
+        return {}
+
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        logger.warning("Failed to load config from %s", path, exc_info=True)
+        return {}
+
+    return data if isinstance(data, dict) else {}
+
+
+def _llm_config() -> dict[str, Any]:
+    """Return the ``[llm]`` table from ``revlo.toml`` if present."""
+    data = _load_toml_config().get("llm", {})
+    return data if isinstance(data, dict) else {}
+
+
 def resolve_provider(provider: str | LLMProvider | None = None) -> LLMProvider:
-    """Resolve the active LLM provider from an override or environment."""
-    raw = provider or os.environ.get("REVLO_LLM_PROVIDER", DEFAULT_PROVIDER.value)
+    """Resolve the active LLM provider from override, env, config, or default."""
+    raw = (
+        provider
+        or os.environ.get("REVLO_LLM_PROVIDER")
+        or _llm_config().get("provider")
+        or DEFAULT_PROVIDER.value
+    )
     if isinstance(raw, LLMProvider):
         return raw
     return LLMProvider(raw.strip().lower())
@@ -58,26 +107,33 @@ def resolve_review_model(
 ) -> str:
     """Resolve the review model.
 
-    The public config surface is OpenAI-first via ``REVLO_REVIEW_MODEL``.
+    The public config surface is provider-agnostic via ``REVLO_REVIEW_MODEL``
+    or ``revlo.toml``.
     Provider-specific env vars remain as internal escape hatches.
     """
     if override:
         return override
 
     resolved = resolve_provider(provider)
+    config_value = _llm_config().get("review_model")
     generic = os.environ.get("REVLO_REVIEW_MODEL")
-    if generic and resolved == LLMProvider.openai:
+    if generic:
         return generic
     env_key = (
         "REVLO_OPENAI_REVIEW_MODEL"
         if resolved == LLMProvider.openai
         else "REVLO_ANTHROPIC_REVIEW_MODEL"
     )
+    fallback = (
+        config_value
+        if isinstance(config_value, str) and config_value.strip()
+        else DEFAULT_OPENAI_REVIEW_MODEL
+        if resolved == LLMProvider.openai
+        else DEFAULT_ANTHROPIC_REVIEW_MODEL
+    )
     return os.environ.get(
         env_key,
-        DEFAULT_OPENAI_REVIEW_MODEL
-        if resolved == LLMProvider.openai
-        else DEFAULT_ANTHROPIC_REVIEW_MODEL,
+        fallback,
     )
 
 
@@ -87,26 +143,33 @@ def resolve_extraction_model(
 ) -> str:
     """Resolve the datasheet extraction model.
 
-    The public config surface is OpenAI-first via ``REVLO_EXTRACTION_MODEL``.
+    The public config surface is provider-agnostic via
+    ``REVLO_EXTRACTION_MODEL`` or ``revlo.toml``.
     Provider-specific env vars remain as internal escape hatches.
     """
     if override:
         return override
 
     resolved = resolve_provider(provider)
+    config_value = _llm_config().get("extraction_model")
     generic = os.environ.get("REVLO_EXTRACTION_MODEL")
-    if generic and resolved == LLMProvider.openai:
+    if generic:
         return generic
     env_key = (
         "REVLO_OPENAI_EXTRACTION_MODEL"
         if resolved == LLMProvider.openai
         else "REVLO_ANTHROPIC_EXTRACTION_MODEL"
     )
+    fallback = (
+        config_value
+        if isinstance(config_value, str) and config_value.strip()
+        else DEFAULT_OPENAI_EXTRACTION_MODEL
+        if resolved == LLMProvider.openai
+        else DEFAULT_ANTHROPIC_EXTRACTION_MODEL
+    )
     return os.environ.get(
         env_key,
-        DEFAULT_OPENAI_EXTRACTION_MODEL
-        if resolved == LLMProvider.openai
-        else DEFAULT_ANTHROPIC_EXTRACTION_MODEL,
+        fallback,
     )
 
 
@@ -116,32 +179,42 @@ def resolve_ask_model(
 ) -> str:
     """Resolve the Ask Mode model.
 
-    The public config surface is OpenAI-first via ``REVLO_ASK_MODEL``.
+    The public config surface is provider-agnostic via ``REVLO_ASK_MODEL``
+    or ``revlo.toml``.
     Provider-specific env vars remain as internal escape hatches.
     """
     if override:
         return override
 
     resolved = resolve_provider(provider)
+    config_value = _llm_config().get("ask_model")
     generic = os.environ.get("REVLO_ASK_MODEL")
-    if generic and resolved == LLMProvider.openai:
+    if generic:
         return generic
     env_key = (
         "REVLO_OPENAI_ASK_MODEL"
         if resolved == LLMProvider.openai
         else "REVLO_ANTHROPIC_ASK_MODEL"
     )
+    fallback = (
+        config_value
+        if isinstance(config_value, str) and config_value.strip()
+        else DEFAULT_OPENAI_ASK_MODEL
+        if resolved == LLMProvider.openai
+        else DEFAULT_ANTHROPIC_ASK_MODEL
+    )
     return os.environ.get(
         env_key,
-        DEFAULT_OPENAI_ASK_MODEL
-        if resolved == LLMProvider.openai
-        else DEFAULT_ANTHROPIC_ASK_MODEL,
+        fallback,
     )
 
 
 def resolve_datasheet_concurrency() -> int:
     """Return the configured datasheet enrichment concurrency."""
-    raw = os.environ.get("REVLO_DATASHEET_CONCURRENCY", str(DEFAULT_DATASHEET_CONCURRENCY))
+    raw = os.environ.get(
+        "REVLO_DATASHEET_CONCURRENCY",
+        str(_llm_config().get("datasheet_concurrency", DEFAULT_DATASHEET_CONCURRENCY)),
+    )
     try:
         return max(1, int(raw))
     except ValueError:

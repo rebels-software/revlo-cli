@@ -1,8 +1,4 @@
-"""Test suite for CLI datasheet enrichment integration (US-021).
-
-Tests the --skip-datasheet flag and enrichment pipeline integration in the CLI.
-All external calls (parse_schematic, review_schematic, enrich_schematic, API) are fully mocked.
-"""
+"""Test suite for CLI datasheet enrichment integration (US-021)."""
 
 from __future__ import annotations
 
@@ -110,10 +106,18 @@ def test_skip_datasheet_flag_recognized():
 
 
 def test_skip_datasheet_flag_defaults_to_false():
-    """Test that skip_datasheet defaults to False (enrichment enabled)."""
+    """Test that skip_datasheet defaults to False."""
     parser = _build_parser()
     args = parser.parse_args(["review", "test.kicad_sch"])
     assert args.skip_datasheet is False
+
+
+def test_full_review_flag_recognized():
+    """Test that --full-review flag is recognized by argparse."""
+    parser = _build_parser()
+    args = parser.parse_args(["review", "test.kicad_sch", "--full-review"])
+    assert args.command == "review"
+    assert args.full_review is True
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +129,7 @@ def test_skip_datasheet_flag_defaults_to_false():
 @patch("revlo.cli.generate_markdown_report")
 @patch("revlo.cli.asyncio.run")
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-def test_enrichment_pipeline_called_by_default(
+def test_fast_review_skips_enrichment_by_default(
     mock_asyncio_run: MagicMock,
     mock_markdown: MagicMock,
     mock_review: AsyncMock,
@@ -137,32 +141,19 @@ def test_enrichment_pipeline_called_by_default(
     fixture_path: str,
     capsys,
 ):
-    """Test that enrichment pipeline is called when --skip-datasheet is NOT set."""
+    """Test that fast review skips enrichment when no full-review flag is set."""
     mock_parse.return_value = mock_parsed_schematic
     mock_markdown.return_value = "# Test Report\n"
 
     # Mock the enrichment pipeline at the import location
     with patch("revlo.datasheet.pipeline.enrich_schematic") as mock_enrich:
-        # Mock asyncio.run to return the specs and then the report
-        mock_asyncio_run.side_effect = [mock_datasheet_specs, mock_review_report]
+        mock_asyncio_run.return_value = mock_review_report
 
         args = _build_parser().parse_args(["review", fixture_path, "--no-tui"])
         _run_review(args)
 
-    # Verify enrichment was called with parsed schematic and cache_dir
-    mock_enrich.assert_called_once()
-    call_args = mock_enrich.call_args
-    assert call_args[0][0] == mock_parsed_schematic
-    # Cache dir should be Path(fixture_path).parent / "datasheets"
-    cache_dir = call_args[0][1]
-    assert isinstance(cache_dir, Path)
-    assert cache_dir.name == "datasheets"
-    # Verify status_callback is passed
-    assert "status_callback" in call_args.kwargs
-    assert callable(call_args.kwargs["status_callback"])
-
-    # Verify review_schematic was called with datasheet_specs
-    assert mock_asyncio_run.call_count == 2
+    mock_enrich.assert_not_called()
+    assert mock_asyncio_run.call_count == 1
 
 
 @patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
@@ -203,6 +194,44 @@ def test_skip_datasheet_flag_skips_enrichment(
 @patch("revlo.cli.generate_markdown_report")
 @patch("revlo.cli.asyncio.run")
 @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+def test_full_review_calls_enrichment_pipeline(
+    mock_asyncio_run: MagicMock,
+    mock_markdown: MagicMock,
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_save: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    mock_datasheet_specs: dict[str, DatasheetSpec],
+    fixture_path: str,
+):
+    """Test that full review enables enrichment pipeline execution."""
+    mock_parse.return_value = mock_parsed_schematic
+    mock_markdown.return_value = "# Test Report\n"
+
+    with patch("revlo.datasheet.pipeline.enrich_schematic") as mock_enrich:
+        mock_asyncio_run.side_effect = [mock_datasheet_specs, mock_review_report]
+
+        args = _build_parser().parse_args(["review", fixture_path, "--full-review", "--no-tui"])
+        _run_review(args)
+
+    mock_enrich.assert_called_once()
+    call_args = mock_enrich.call_args
+    assert call_args[0][0] == mock_parsed_schematic
+    cache_dir = call_args[0][1]
+    assert isinstance(cache_dir, Path)
+    assert cache_dir.name == "datasheets"
+    assert "status_callback" in call_args.kwargs
+    assert callable(call_args.kwargs["status_callback"])
+    assert mock_asyncio_run.call_count == 2
+
+
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch("revlo.cli.generate_markdown_report")
+@patch("revlo.cli.asyncio.run")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
 def test_enrichment_failure_degrades_gracefully(
     mock_asyncio_run: MagicMock,
     mock_markdown: MagicMock,
@@ -225,7 +254,7 @@ def test_enrichment_failure_degrades_gracefully(
             mock_review_report,
         ]
 
-        args = _build_parser().parse_args(["review", fixture_path, "--no-tui"])
+        args = _build_parser().parse_args(["review", fixture_path, "--full-review", "--no-tui"])
         _run_review(args)
 
     # Verify warning was logged
@@ -264,7 +293,7 @@ def test_cache_dir_defaults_to_parent_datasheets(
     with patch("revlo.datasheet.pipeline.enrich_schematic") as mock_enrich:
         mock_asyncio_run.side_effect = [mock_datasheet_specs, mock_review_report]
 
-        args = _build_parser().parse_args(["review", str(test_file), "--no-tui"])
+        args = _build_parser().parse_args(["review", str(test_file), "--full-review", "--no-tui"])
         _run_review(args)
 
     # Verify cache_dir is correct
@@ -326,7 +355,7 @@ def test_specs_passed_to_review_schematic_via_asyncio_run(
 
         mock_asyncio_run.side_effect = run_impl
 
-        args = _build_parser().parse_args(["review", fixture_path, "--no-tui"])
+        args = _build_parser().parse_args(["review", fixture_path, "--full-review", "--no-tui"])
         _run_review(args)
 
     # Verify datasheet_specs were passed to review_schematic

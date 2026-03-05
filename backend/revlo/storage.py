@@ -21,6 +21,18 @@ class HistoryEntry:
     summary: str
 
 
+_REVIEW_META_KEYS = ("llm_provider", "llm_model", "datasheet_mode")
+
+
+def _hydrate_review_payload(data: dict, meta: dict) -> dict:
+    """Backfill new review metadata fields from legacy ``_meta`` storage."""
+    payload = dict(data)
+    for key in _REVIEW_META_KEYS:
+        if (key not in payload or payload.get(key) == "") and key in meta:
+            payload[key] = meta[key]
+    return payload
+
+
 def save_review(report: ReviewReport, schematic_path: str) -> Path:
     """Save review report as JSON in .revlo/ next to the schematic.
 
@@ -37,11 +49,16 @@ def save_review(report: ReviewReport, schematic_path: str) -> Path:
 
     # Add metadata
     data = report.model_dump()
-    data["_meta"] = {
+    meta = {
         "schematic": sch.name,
         "saved_at": datetime.now(timezone.utc).isoformat(),
         "revlo_version": __version__,
     }
+    for key in _REVIEW_META_KEYS:
+        value = getattr(report, key, "")
+        if value:
+            meta[key] = value
+    data["_meta"] = meta
 
     out_path.write_text(json.dumps(data, indent=2))
     return out_path
@@ -105,7 +122,7 @@ def load_latest_review(schematic_path: str) -> tuple[ReviewReport, dict, Path] |
     data = json.loads(latest.read_text())
 
     meta = data.pop("_meta", {})
-    report = ReviewReport.model_validate(data)
+    report = ReviewReport.model_validate(_hydrate_review_payload(data, meta))
     return report, meta, latest
 
 
@@ -232,7 +249,7 @@ def load_entry(entry_path: Path) -> tuple[ReviewReport | dict, dict, str]:
 
     # Determine type from filename
     if "-review-" in entry_path.name:
-        report = ReviewReport.model_validate(raw)
+        report = ReviewReport.model_validate(_hydrate_review_payload(raw, meta))
         return report, meta, "review"
     else:
         return raw, meta, "chat"

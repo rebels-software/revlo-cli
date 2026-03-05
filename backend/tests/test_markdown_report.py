@@ -1,7 +1,5 @@
 """Test suite for markdown report generation."""
 
-import pytest
-
 from revlo.report import generate_markdown_report
 from revlo.reviewer.models import (
     Finding,
@@ -125,6 +123,25 @@ class TestGenerateMarkdownReport:
 
         assert "# Power Supply Board Rev 2" in markdown
         assert "**Review date:** 2024-01-15" in markdown
+
+    def test_metadata_fields_do_not_change_markdown_output(self):
+        """Persistence metadata should not leak into the human report."""
+        report = ReviewReport(
+            schematic_title="Metadata Test",
+            review_date="2024-01-15",
+            summary="Summary text",
+            llm_provider="openai",
+            llm_model="gpt-5.4",
+            datasheet_mode="fast",
+        )
+
+        markdown = generate_markdown_report(report)
+
+        assert "# Metadata Test" in markdown
+        assert "Summary text" in markdown
+        assert "openai" not in markdown
+        assert "gpt-5.4" not in markdown
+        assert "datasheet_mode" not in markdown
 
     def test_missing_schematic_title_defaults_to_schematic_review(self):
         """Missing schematic_title should default to 'Schematic Review'."""

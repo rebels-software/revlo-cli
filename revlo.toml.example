@@ -1,0 +1,12 @@
+[llm]
+provider = "openai"
+review_model = "gpt-5.4"
+extraction_model = "gpt-5.3"
+ask_model = "gpt-5.4"
+datasheet_concurrency = 4
+
+# Switch providers by changing only this one value:
+# provider = "anthropic"
+# review_model = "claude-opus-4-6"
+# extraction_model = "claude-haiku-4-5-20251001"
+# ask_model = "claude-opus-4-6"

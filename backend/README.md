@@ -60,12 +60,44 @@ export OPENAI_API_KEY="sk-proj-..."
 revlo review path/to/schematic.kicad_sch
 ```
 
-That's it. Revlo parses the schematic, fetches datasheets, runs the AI review, and launches the interactive TUI.
+That runs the fast review path by default: parse the schematic, run the AI review, and launch the interactive TUI without waiting for datasheet enrichment.
+
+For the slower, datasheet-enriched path:
+
+```bash
+revlo review path/to/schematic.kicad_sch --full-review
+```
+
+### Configure Provider And Models
+
+Create a `revlo.toml` file in your project directory:
+
+```toml
+[llm]
+provider = "openai"
+review_model = "gpt-5.4"
+extraction_model = "gpt-5.3"
+ask_model = "gpt-5.4"
+datasheet_concurrency = 4
+```
+
+To switch to Anthropic, change only `provider` and the model IDs:
+
+```toml
+[llm]
+provider = "anthropic"
+review_model = "claude-opus-4-6"
+extraction_model = "claude-haiku-4-5-20251001"
+ask_model = "claude-opus-4-6"
+datasheet_concurrency = 4
+```
 
 ## Requirements
 
 - Python 3.11+
-- An `OPENAI_API_KEY` for review and datasheet extraction
+- An API key for the configured provider:
+  - `OPENAI_API_KEY` when `provider = "openai"`
+  - `ANTHROPIC_API_KEY` when `provider = "anthropic"`
 - KiCad schematic in modern `.kicad_sch` format
 
 Optional:

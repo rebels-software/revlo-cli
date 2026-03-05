@@ -14,7 +14,6 @@ from revlo.reviewer.models import (
     Severity,
 )
 from revlo.storage import (
-    HistoryEntry,
     list_entries,
     load_entry,
     load_latest_review,
@@ -100,6 +99,25 @@ def test_save_review_contains_valid_report_and_meta(
     assert report.findings[0].title == "Missing decoupling capacitor"
 
 
+def test_save_review_persists_review_metadata_fields(
+    sample_report: ReviewReport, fake_schematic: Path
+) -> None:
+    """save_review() persists provider/model/datasheet mode in both payload and meta."""
+    sample_report.llm_provider = "openai"
+    sample_report.llm_model = "gpt-5.4"
+    sample_report.datasheet_mode = "full"
+
+    saved = save_review(sample_report, str(fake_schematic))
+    data = json.loads(saved.read_text())
+
+    assert data["llm_provider"] == "openai"
+    assert data["llm_model"] == "gpt-5.4"
+    assert data["datasheet_mode"] == "full"
+    assert data["_meta"]["llm_provider"] == "openai"
+    assert data["_meta"]["llm_model"] == "gpt-5.4"
+    assert data["_meta"]["datasheet_mode"] == "full"
+
+
 def test_save_review_idempotent_dir(
     sample_report: ReviewReport, fake_schematic: Path
 ) -> None:
@@ -155,6 +173,35 @@ def test_load_latest_review_round_trip(
     assert meta["schematic"] == "board.kicad_sch"
     assert review_file.exists()
     assert review_file.name.startswith("board-review-")
+
+
+def test_load_latest_review_backfills_metadata_from_meta_only(
+    sample_report: ReviewReport, fake_schematic: Path
+) -> None:
+    """Legacy review files can hydrate metadata fields from ``_meta`` only."""
+    revlo_dir = fake_schematic.parent / ".revlo"
+    revlo_dir.mkdir(exist_ok=True)
+
+    data = sample_report.model_dump()
+    data["_meta"] = {
+        "schematic": "board.kicad_sch",
+        "saved_at": "2026-02-12T12:00:00+00:00",
+        "revlo_version": "0.1.0",
+        "llm_provider": "anthropic",
+        "llm_model": "claude-opus-4-6",
+        "datasheet_mode": "fast",
+    }
+    (revlo_dir / "board-review-20260212T120000.json").write_text(
+        json.dumps(data, indent=2)
+    )
+
+    result = load_latest_review(str(fake_schematic))
+    assert result is not None
+    report, meta, _ = result
+    assert report.llm_provider == "anthropic"
+    assert report.llm_model == "claude-opus-4-6"
+    assert report.datasheet_mode == "fast"
+    assert meta["llm_provider"] == "anthropic"
 
 
 def test_load_latest_review_picks_newest(
@@ -258,7 +305,25 @@ def test_list_entries_sorted_newest_first(
     assert len(entries) == 2
     # First entry should be the newer one
     assert entries[0].meta.get("saved_at", "").startswith("2026-02-12")
-    assert entries[1].meta.get("saved_at", "").startswith("2026-01-01")
+
+
+def test_load_entry_round_trips_review_metadata(
+    sample_report: ReviewReport, fake_schematic: Path
+) -> None:
+    """load_entry() preserves persisted review metadata fields."""
+    sample_report.llm_provider = "openai"
+    sample_report.llm_model = "gpt-5.4"
+    sample_report.datasheet_mode = "full"
+    saved = save_review(sample_report, str(fake_schematic))
+
+    loaded, meta, entry_type = load_entry(saved)
+
+    assert entry_type == "review"
+    assert isinstance(loaded, ReviewReport)
+    assert loaded.llm_provider == "openai"
+    assert loaded.llm_model == "gpt-5.4"
+    assert loaded.datasheet_mode == "full"
+    assert meta["llm_provider"] == "openai"
 
 
 def test_list_entries_mixed_review_and_chat(

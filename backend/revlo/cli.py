@@ -14,7 +14,11 @@ from rich.progress import Progress, TextColumn
 from rich.status import Status
 
 from revlo import __version__
-from revlo.config import DEFAULT_PROVIDER, resolve_review_model
+from revlo.config import (
+    required_api_key_env,
+    resolve_provider,
+    resolve_review_model,
+)
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
 from revlo.reviewer import review_schematic
@@ -74,13 +78,19 @@ def _build_parser() -> argparse.ArgumentParser:
     review.add_argument(
         "--model",
         default=None,
-        help="OpenAI model ID override for review (default: gpt-5.4)",
+        help="Model ID override for the configured provider",
+    )
+    review.add_argument(
+        "--full-review",
+        action="store_true",
+        dest="full_review",
+        help="Enable datasheet enrichment for a slower, deeper review",
     )
     review.add_argument(
         "--skip-datasheet",
         action="store_true",
         dest="skip_datasheet",
-        help="Skip datasheet enrichment and run basic review only",
+        help="Compatibility alias for fast review without datasheet enrichment",
     )
     review.add_argument(
         "--min-confidence",
@@ -161,11 +171,12 @@ def _run_review(args: argparse.Namespace) -> None:
         print(f"Error: file not found: {path}", file=sys.stderr)
         sys.exit(1)
 
-    provider = DEFAULT_PROVIDER
+    provider = resolve_provider()
+    api_key_env = required_api_key_env(provider)
 
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not os.environ.get(api_key_env):
         print(
-            "Error: OPENAI_API_KEY environment variable is not set",
+            f"Error: {api_key_env} environment variable is not set",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -204,9 +215,11 @@ def _run_review(args: argparse.Namespace) -> None:
         n_nets = len(parsed.nets)
         print_step(console, f"Found {n_comps} components, {n_nets} nets")
 
-    # Datasheet enrichment (unless --skip-datasheet)
+    datasheet_enabled = args.full_review and not args.skip_datasheet
+
+    # Datasheet enrichment (full review only)
     datasheet_specs = None
-    if not args.skip_datasheet:
+    if datasheet_enabled:
         try:
             from revlo.datasheet.pipeline import enrich_schematic
 
@@ -288,7 +301,7 @@ def _run_review(args: argparse.Namespace) -> None:
             if show_rich:
                 print_error(console, f"Datasheet enrichment failed: {exc}")
 
-    model = resolve_review_model(override=args.model)
+    model = resolve_review_model(provider, override=args.model)
 
     # Run review
     try:
@@ -324,6 +337,11 @@ def _run_review(args: argparse.Namespace) -> None:
     # -- summary line --
     if show_rich:
         print_summary(console, report)
+
+    # Persist execution metadata with the saved review.
+    report.llm_provider = str(provider)
+    report.llm_model = model
+    report.datasheet_mode = "full" if datasheet_enabled else "fast"
 
     # Auto-save review
     from revlo.storage import save_review
@@ -378,6 +396,7 @@ def _run_review(args: argparse.Namespace) -> None:
         path,
         review_path=saved_path,
         parsed_schematic=parsed,
+        provider=provider,
     )
     app.run()
 
@@ -496,7 +515,7 @@ def _run_history(args: argparse.Namespace) -> None:
 
         from revlo.tui import RevloApp
 
-        app = RevloApp(data, path, review_path=entry.path)
+        app = RevloApp(data, path, review_path=entry.path, provider=resolve_provider())
         app.run()
     else:
         # Chat entries fall back to --no-tui display
@@ -546,7 +565,7 @@ def _run_open(args: argparse.Namespace) -> None:
 
     from revlo.tui import RevloApp
 
-    app = RevloApp(report, path, review_path=review_file)
+    app = RevloApp(report, path, review_path=review_file, provider=resolve_provider())
     app.run()
 
 

@@ -793,12 +793,45 @@ def test_run_review_file_not_found():
 
 
 def test_run_review_missing_api_key(fixture_path: str):
-    """Test error when OPENAI_API_KEY is not set."""
+    """Test error when the configured provider key is not set."""
     with patch.dict(os.environ, {}, clear=True):
         args = _build_parser().parse_args(["review", fixture_path])
         with pytest.raises(SystemExit) as exc:
             _run_review(args)
         assert exc.value.code == 1
+
+
+@patch("revlo.parser.netlist.try_export_netlist", return_value=None)
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=True)
+def test_run_review_uses_provider_from_revlo_toml(
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_save: MagicMock,
+    mock_netlist: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Test provider resolution through revlo.toml without a CLI provider flag."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "revlo.toml").write_text(
+        "[llm]\nprovider = \"anthropic\"\nreview_model = \"claude-opus-4-6\"\n"
+    )
+    mock_parse.return_value = mock_parsed_schematic
+    mock_review.return_value = mock_review_report
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+        args = _build_parser().parse_args(["review", fixture_path, "--skip-datasheet", "--no-tui"])
+        _run_review(args)
+
+    assert mock_review.call_args.kwargs["provider"] == "anthropic"
+    assert mock_review.call_args.kwargs["model"] == "claude-opus-4-6"
 
 
 @patch("revlo.parser.netlist.try_export_netlist", return_value=None)

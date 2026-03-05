@@ -54,6 +54,9 @@ class ReviewReport(BaseModel):
     schematic_title: str = ""
     review_date: str = ""
     datasheet_specs: dict[str, DatasheetSpec] = Field(default_factory=dict)
+    llm_provider: str = ""
+    llm_model: str = ""
+    datasheet_mode: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
