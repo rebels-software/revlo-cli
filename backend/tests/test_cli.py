@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from revlo.cli import _build_parser, _run_history, _run_open, _run_review, main
+from revlo.cli import _build_parser, _run_check, _run_history, _run_open, _run_review, main
 from revlo.parser.models import (
     ParsedComponent,
     ParsedSchematic,
@@ -108,6 +108,16 @@ def test_build_parser_creates_review_subcommand():
     assert args.no_tui is False
 
 
+def test_build_parser_creates_check_subcommand():
+    """Test that _build_parser creates a check subcommand."""
+    parser = _build_parser()
+    args = parser.parse_args(["check", "test.kicad_sch"])
+    assert args.command == "check"
+    assert args.path == "test.kicad_sch"
+    assert args.json_output is False
+    assert args.min_confidence == 0.5
+
+
 def test_build_parser_with_output_flag():
     """Test --output flag."""
     parser = _build_parser()
@@ -155,6 +165,17 @@ def test_build_parser_open_with_flags():
     args = parser.parse_args(["open", "test.kicad_sch", "--json", "--no-tui"])
     assert args.json_output is True
     assert args.no_tui is True
+
+
+def test_run_check_forces_non_interactive_review(fixture_path: str):
+    """The check command should route through _run_review with no_tui enabled."""
+    args = _build_parser().parse_args(["check", fixture_path, "--skip-datasheet"])
+
+    with patch("revlo.cli._run_review") as mock_run_review:
+        _run_check(args)
+
+    assert args.no_tui is True
+    mock_run_review.assert_called_once_with(args)
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,49 @@ from revlo.ui import (
 logger = logging.getLogger(__name__)
 
 
+def _add_review_args(parser: argparse.ArgumentParser) -> None:
+    """Attach shared review-style arguments to a subcommand parser."""
+    parser.add_argument(
+        "path",
+        help="Path to a .kicad_sch file",
+    )
+    parser.add_argument(
+        "--output",
+        metavar="FILE",
+        help="Write report to FILE instead of stdout",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output raw JSON instead of markdown",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model ID override for the configured provider",
+    )
+    parser.add_argument(
+        "--full-review",
+        action="store_true",
+        dest="full_review",
+        help="Enable datasheet enrichment for a slower, deeper review",
+    )
+    parser.add_argument(
+        "--skip-datasheet",
+        action="store_true",
+        dest="skip_datasheet",
+        help="Compatibility alias for fast review without datasheet enrichment",
+    )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.5,
+        dest="min_confidence",
+        help="Minimum confidence threshold for findings (0.0-1.0, default: 0.5)",
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build and return the top-level argument parser."""
     parser = argparse.ArgumentParser(
@@ -60,51 +103,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "review",
         help="Review a .kicad_sch schematic file",
     )
-    review.add_argument(
-        "path",
-        help="Path to a .kicad_sch file",
-    )
-    review.add_argument(
-        "--output",
-        metavar="FILE",
-        help="Write report to FILE instead of stdout",
-    )
-    review.add_argument(
-        "--json",
-        action="store_true",
-        dest="json_output",
-        help="Output raw JSON instead of markdown",
-    )
-    review.add_argument(
-        "--model",
-        default=None,
-        help="Model ID override for the configured provider",
-    )
-    review.add_argument(
-        "--full-review",
-        action="store_true",
-        dest="full_review",
-        help="Enable datasheet enrichment for a slower, deeper review",
-    )
-    review.add_argument(
-        "--skip-datasheet",
-        action="store_true",
-        dest="skip_datasheet",
-        help="Compatibility alias for fast review without datasheet enrichment",
-    )
-    review.add_argument(
-        "--min-confidence",
-        type=float,
-        default=0.5,
-        dest="min_confidence",
-        help="Minimum confidence threshold for findings (0.0-1.0, default: 0.5)",
-    )
+    _add_review_args(review)
     review.add_argument(
         "--no-tui",
         action="store_true",
         dest="no_tui",
         help="Print styled summary and finding cards to stderr, then exit (no TUI)",
     )
+
+    check = subparsers.add_parser(
+        "check",
+        help="Run a non-interactive review intended for automation and CI",
+        description=(
+            "Run Revlo without launching the TUI. Use --json or --output for "
+            "machine-readable automation workflows."
+        ),
+    )
+    _add_review_args(check)
     # -- open subcommand: view last stored review --
     open_cmd = subparsers.add_parser(
         "open",
@@ -401,6 +416,12 @@ def _run_review(args: argparse.Namespace) -> None:
     app.run()
 
 
+def _run_check(args: argparse.Namespace) -> None:
+    """Execute the non-interactive check subcommand."""
+    args.no_tui = True
+    _run_review(args)
+
+
 def _run_history(args: argparse.Namespace) -> None:
     """Execute the history subcommand."""
     import json as json_mod
@@ -595,6 +616,8 @@ def _main_inner() -> None:
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     if args.command == "review":
         _run_review(args)
+    elif args.command == "check":
+        _run_check(args)
     elif args.command == "open":
         _run_open(args)
     elif args.command == "history":
