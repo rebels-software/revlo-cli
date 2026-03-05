@@ -278,11 +278,13 @@ class DetailPanel(Vertical):
             id="detail-placeholder",
         )
         yield Static("", id="detail-content")
+        yield Static("", id="detail-evidence")
         yield Static("", id="detail-description")
         yield Static("", id="detail-recommendation")
         yield Static("", id="detail-suggested-fix")
 
     def on_mount(self) -> None:
+        self.query_one("#detail-evidence", Static).border_title = "Evidence"
         self.query_one("#detail-description", Static).border_title = "Description"
         self.query_one("#detail-recommendation", Static).border_title = "Recommendation"
         self.query_one("#detail-suggested-fix", Static).border_title = "Suggested Fix"
@@ -307,6 +309,45 @@ class DetailPanel(Vertical):
                 start = prev = p
         parts.append(f"{start}" if start == prev else f"{start}-{prev}")
         return "p." + ", ".join(parts)
+
+    def _format_evidence(self, finding: Finding) -> str:
+        """Render structured finding evidence for the detail panel."""
+        evidence = finding.evidence
+        lines = [
+            f"[{SOFT_WHITE}]Source:[/] [{LIGHT_GRAY}]{finding.source_type.value}[/]"
+        ]
+
+        if evidence.refs:
+            lines.append(
+                f"[{SOFT_WHITE}]Refs:[/] [{ELECTRIC_TEAL}]{', '.join(evidence.refs)}[/]"
+            )
+        if evidence.nets:
+            lines.append(
+                f"[{SOFT_WHITE}]Nets:[/] [{WARM_AMBER}]{', '.join(evidence.nets)}[/]"
+            )
+        if evidence.sheet_paths:
+            lines.append(
+                f"[{SOFT_WHITE}]Sheets:[/] [{LIGHT_GRAY}]{', '.join(evidence.sheet_paths)}[/]"
+            )
+        if evidence.datasheets:
+            lines.append(f"[{SOFT_WHITE}]Datasheets:[/]")
+            for datasheet in evidence.datasheets:
+                parts = [datasheet.mpn or "Unknown part"]
+                if datasheet.manufacturer:
+                    parts.append(datasheet.manufacturer)
+                if datasheet.relevant_pages:
+                    parts.append(self._format_pages(datasheet.relevant_pages))
+                lines.append(f"  - [{WARM_AMBER}]{' | '.join(parts)}[/]")
+        if evidence.notes:
+            lines.append(f"[{SOFT_WHITE}]Notes:[/]")
+            for note in evidence.notes:
+                lines.append(f"  - [{LIGHT_GRAY}]{note}[/]")
+
+        if len(lines) == 1:
+            lines.append(
+                f"[{MUTED_GRAY}]No structured evidence attached to this finding yet.[/]"
+            )
+        return "\n".join(lines)
 
     def show_finding(self, finding: Finding) -> None:
         sev = finding.severity
@@ -347,6 +388,10 @@ class DetailPanel(Vertical):
         content.styles.display = "block"
         content.update("\n".join(header_lines))
 
+        evidence = self.query_one("#detail-evidence", Static)
+        evidence.styles.display = "block"
+        evidence.update(self._format_evidence(finding))
+
         desc = self.query_one("#detail-description", Static)
         desc.styles.display = "block"
         desc.update(finding.description)
@@ -369,6 +414,7 @@ class DetailPanel(Vertical):
             f"[{ELECTRIC_TEAL}]\u2713 No issues found! Your schematic looks good.[/]"
         )
         self.query_one("#detail-content", Static).styles.display = "none"
+        self.query_one("#detail-evidence", Static).styles.display = "none"
         self.query_one("#detail-description", Static).styles.display = "none"
         self.query_one("#detail-recommendation", Static).styles.display = "none"
         self.query_one("#detail-suggested-fix", Static).styles.display = "none"

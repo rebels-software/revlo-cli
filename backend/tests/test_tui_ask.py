@@ -11,11 +11,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from textual.widgets import Static
 
 from revlo.parser.models import ParsedSchematic
 from revlo.reviewer.models import (
+    DatasheetEvidence,
     Finding,
     FindingCategory,
+    FindingEvidence,
+    FindingSourceType,
     ReviewReport,
     Severity,
 )
@@ -221,6 +225,57 @@ def test_investigation_target_banner_text():
     assert "refs=U2, R5" in banner
     assert "nets=NRST" in banner
     assert "recommendation=Add a pull-up." in banner
+
+
+class TestDetailPanelEvidence:
+    @pytest.mark.asyncio
+    async def test_detail_panel_renders_structured_evidence(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        finding = sample_report.findings[0]
+        finding.source_type = FindingSourceType.deterministic
+        finding.evidence = FindingEvidence(
+            refs=["U1", "C5"],
+            nets=["+3V3", "GND"],
+            sheet_paths=["/Power", "/MCU"],
+            datasheets=[
+                DatasheetEvidence(
+                    mpn="STM32F103C8T6",
+                    manufacturer="ST",
+                    relevant_pages=[47, 48],
+                )
+            ],
+            notes=["Observed VDD pin without nearby 100nF capacitor."],
+        )
+        app = RevloApp(sample_report, schematic_path)
+
+        async with app.run_test():
+            detail = app.query_one("#detail-panel", DetailPanel)
+            detail.show_finding(finding)
+
+            evidence = detail.query_one("#detail-evidence", Static)
+            text = evidence.render().plain
+            assert "Source: deterministic" in text
+            assert "Refs: U1, C5" in text
+            assert "Nets: +3V3, GND" in text
+            assert "Sheets: /Power, /MCU" in text
+            assert "STM32F103C8T6 | ST | p.47-48" in text
+            assert "Observed VDD pin without nearby 100nF capacitor." in text
+
+    @pytest.mark.asyncio
+    async def test_detail_panel_labels_missing_evidence_clearly(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+
+        async with app.run_test():
+            detail = app.query_one("#detail-panel", DetailPanel)
+            detail.show_finding(sample_report.findings[0])
+
+            evidence = detail.query_one("#detail-evidence", Static)
+            text = evidence.render().plain
+            assert "Source: llm" in text
+            assert "No structured evidence attached to this finding yet." in text
 
 
 # ---------------------------------------------------------------------------
