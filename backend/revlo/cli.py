@@ -14,6 +14,7 @@ from rich.progress import Progress, TextColumn
 from rich.status import Status
 
 from revlo import __version__
+from revlo.constraints import load_project_constraints
 from revlo.config import (
     required_api_key_env,
     resolve_review_profile,
@@ -84,6 +85,11 @@ def _add_review_args(parser: argparse.ArgumentParser) -> None:
         "--profile",
         default=None,
         help="Review profile override (default: generic)",
+    )
+    parser.add_argument(
+        "--constraints",
+        default=None,
+        help="Path to a project constraints JSON file (default: <schematic>.revlo-constraints.json)",
     )
 
 
@@ -242,6 +248,17 @@ def _run_review(args: argparse.Namespace) -> None:
         print_step(console, f"Found {n_comps} components, {n_nets} nets")
 
     datasheet_enabled = args.full_review and not args.skip_datasheet
+    try:
+        project_constraints = load_project_constraints(path, args.constraints)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if show_rich and project_constraints is not None:
+        print_step(
+            console,
+            f"Loaded {len(project_constraints.constraints)} project constraints",
+        )
 
     # Datasheet enrichment (full review only)
     datasheet_specs = None
@@ -344,6 +361,7 @@ def _run_review(args: argparse.Namespace) -> None:
                         model=model,
                         datasheet_specs=datasheet_specs,
                         min_confidence=args.min_confidence,
+                        project_constraints=project_constraints,
                     )
                 )
         else:
@@ -354,6 +372,7 @@ def _run_review(args: argparse.Namespace) -> None:
                     model=model,
                     datasheet_specs=datasheet_specs,
                     min_confidence=args.min_confidence,
+                    project_constraints=project_constraints,
                 )
             )
     except Exception as exc:

@@ -11,6 +11,7 @@ import re
 
 from revlo.datasheet.models import DatasheetSpec
 from revlo.config import DEFAULT_PROVIDER, resolve_review_model
+from revlo.constraints import ProjectConstraints
 from revlo.llm import generate_text
 from revlo.parser.models import ParsedSchematic
 from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
@@ -262,6 +263,7 @@ async def review_schematic(
     datasheet_specs: dict[str, DatasheetSpec] | None = None,
     min_confidence: float = 0.5,
     enable_deterministic_checks: bool | None = None,
+    project_constraints: ProjectConstraints | None = None,
 ) -> ReviewReport:
     """Review a parsed schematic by sending all chunks to the EE review agent.
 
@@ -282,6 +284,9 @@ async def review_schematic(
             Defaults to ``0.5``.
         enable_deterministic_checks: Optional override for the deterministic
             rule scaffold. When ``None``, environment-based configuration is used.
+        project_constraints: Optional structured project constraints loaded from
+            a sidecar JSON file or explicit CLI path. Reserved for future prompt
+            builders and deterministic checks.
 
     Malformed responses are logged and skipped -- this function never raises
     due to bad LLM output.

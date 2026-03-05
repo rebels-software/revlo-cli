@@ -126,6 +126,14 @@ def test_build_parser_with_profile_flag():
     assert args.profile == "generic"
 
 
+def test_build_parser_with_constraints_flag():
+    parser = _build_parser()
+    args = parser.parse_args(
+        ["review", "test.kicad_sch", "--constraints", "constraints.json"]
+    )
+    assert args.constraints == "constraints.json"
+
+
 def test_build_parser_with_output_flag():
     """Test --output flag."""
     parser = _build_parser()
@@ -669,6 +677,36 @@ def test_run_review_auto_saves(
 
     mock_save.assert_called_once_with(mock_review_report, fixture_path)
     assert mock_review_report.review_profile == "generic"
+
+
+@patch("revlo.parser.netlist.try_export_netlist", return_value=None)
+@patch("revlo.storage.save_review", return_value=Path("/tmp/fake/.revlo/test.json"))
+@patch("revlo.cli.load_project_constraints")
+@patch("revlo.cli.parse_schematic")
+@patch("revlo.cli.review_schematic")
+@patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+def test_run_review_threads_loaded_constraints(
+    mock_review: AsyncMock,
+    mock_parse: MagicMock,
+    mock_load_constraints: MagicMock,
+    mock_save: MagicMock,
+    mock_netlist: MagicMock,
+    mock_parsed_schematic: ParsedSchematic,
+    mock_review_report: ReviewReport,
+    fixture_path: str,
+):
+    mock_parse.return_value = mock_parsed_schematic
+    mock_load_constraints.return_value = {"constraints": []}
+
+    with patch("revlo.cli.asyncio.run") as mock_asyncio_run:
+        mock_asyncio_run.return_value = mock_review_report
+        args = _build_parser().parse_args(
+            ["review", fixture_path, "--constraints", "constraints.json", "--no-tui"]
+        )
+        _run_review(args)
+
+    mock_load_constraints.assert_called_once_with(fixture_path, "constraints.json")
+    assert mock_review.call_args.kwargs["project_constraints"] == {"constraints": []}
 
 
 def test_run_review_invalid_profile_exits(fixture_path: str):
