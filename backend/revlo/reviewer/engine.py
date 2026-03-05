@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import json
 import logging
+import os
 import re
 
 from revlo.datasheet.models import DatasheetSpec
@@ -18,6 +19,8 @@ from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
 from revlo.skills import load_skill
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_REVIEW_BATCH_SIZE = 8
 
 
 def _extract_json_from_response(text: str) -> object | None:
@@ -192,6 +195,53 @@ async def _review_chunk_generic(
         return []
 
 
+def _resolve_review_batch_size() -> int:
+    """Return the configured review batch size."""
+    raw = os.environ.get("REVLO_REVIEW_BATCH_SIZE", str(_DEFAULT_REVIEW_BATCH_SIZE))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _DEFAULT_REVIEW_BATCH_SIZE
+
+
+def _split_review_batches(
+    chunks: list[ReviewChunk],
+    batch_size: int,
+) -> list[list[ReviewChunk]]:
+    """Split review chunks into bounded batches."""
+    return [
+        chunks[index : index + batch_size]
+        for index in range(0, len(chunks), batch_size)
+    ]
+
+
+async def _review_chunk_batch(
+    chunks: list[ReviewChunk],
+    system_prompt: str,
+    provider: str,
+    model: str,
+    batch_index: int,
+    total_batches: int,
+) -> list[Finding]:
+    """Review one bounded batch, then fall back per chunk when needed."""
+    findings = await _review_with_ee_agent(chunks, system_prompt, provider, model)
+    if findings:
+        return findings
+
+    logger.info(
+        "EE agent returned no findings for batch %d/%d, falling back to per-chunk generic review",
+        batch_index,
+        total_batches,
+    )
+    chunk_results = await asyncio.gather(
+        *[_review_chunk_generic(chunk, provider, model) for chunk in chunks]
+    )
+    flattened: list[Finding] = []
+    for chunk_findings in chunk_results:
+        flattened.extend(chunk_findings)
+    return flattened
+
+
 def _build_summary(findings: list[Finding]) -> str:
     """Build a human-readable summary string from a list of findings."""
     errors = sum(1 for f in findings if f.severity == "error")
@@ -256,21 +306,30 @@ async def review_schematic(
     # Load the comprehensive EE system prompt.
     ee_prompt = load_skill("ee_review")
 
-    # Dispatch ALL chunks to the EE agent in a single call.
-    all_findings = await _review_with_ee_agent(
-        chunks, ee_prompt, str(provider), resolved_model
-    )
-
-    # Fallback: if EE agent produced no findings, try per-chunk generic review.
-    if not all_findings and chunks:
+    batch_size = _resolve_review_batch_size()
+    chunk_batches = _split_review_batches(chunks, batch_size)
+    if len(chunk_batches) > 1:
         logger.info(
-            "EE agent returned no findings, falling back to per-chunk generic review"
+            "Reviewing %d chunks across %d bounded batches (batch size %d)",
+            len(chunks),
+            len(chunk_batches),
+            batch_size,
         )
-        chunk_results = await asyncio.gather(
-            *[_review_chunk_generic(chunk, str(provider), resolved_model) for chunk in chunks]
-        )
-        for chunk_findings in chunk_results:
-            all_findings.extend(chunk_findings)
+
+    batch_results = await asyncio.gather(
+        *[
+            _review_chunk_batch(
+                batch,
+                ee_prompt,
+                str(provider),
+                resolved_model,
+                batch_index=index,
+                total_batches=len(chunk_batches),
+            )
+            for index, batch in enumerate(chunk_batches, start=1)
+        ]
+    )
+    all_findings = [finding for batch in batch_results for finding in batch]
 
     # Filter low-confidence findings.
     all_findings = [f for f in all_findings if f.confidence >= min_confidence]

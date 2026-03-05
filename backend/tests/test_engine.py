@@ -21,6 +21,7 @@ from revlo.reviewer.engine import (
     _build_summary,
     review_schematic,
 )
+from revlo.reviewer.chunker import ReviewChunk
 from revlo.reviewer.models import (
     Finding,
     ReviewReport,
@@ -136,6 +137,25 @@ def _mock_generate_text_responses(*responses: str):
         return queue.pop(0)
 
     return _mock_impl
+
+
+def _make_review_chunk(index: int) -> ReviewChunk:
+    """Create a minimal review chunk for batching tests."""
+    return ReviewChunk(
+        chunk_type="ic_context",
+        label=f"U{index} - Test IC {index}",
+        components=[
+            ParsedComponent(
+                reference=f"U{index}",
+                value=f"TestIC{index}",
+                lib_id="MCU_ST:TEST",
+                footprint="QFN-32",
+                pins=[],
+            )
+        ],
+        nets=[],
+        unconnected_pins=[],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -379,3 +399,77 @@ class TestDebugLogging:
             "falling back to per-chunk generic review" in record.message
             for record in caplog.records
         ), f"Expected fallback info log, got: {[r.message for r in caplog.records]}"
+
+
+class TestBoundedBatchReview:
+    @pytest.mark.asyncio
+    async def test_large_schematic_is_split_into_bounded_batches(self, monkeypatch):
+        monkeypatch.setenv("REVLO_REVIEW_BATCH_SIZE", "2")
+        schematic = _make_schematic()
+        chunks = [_make_review_chunk(i) for i in range(1, 6)]
+        seen_batch_sizes: list[int] = []
+
+        async def _mock_batched_review(batch, system_prompt, provider, model):
+            seen_batch_sizes.append(len(batch))
+            batch_number = len(seen_batch_sizes)
+            return [
+                Finding(
+                    **_valid_finding_dict(
+                        component_ref=batch[0].components[0].reference,
+                        title=f"Batch {batch_number} finding",
+                    )
+                )
+            ]
+
+        with patch(
+            "revlo.reviewer.engine.chunk_schematic",
+            return_value=chunks,
+        ), patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_mock_batched_review,
+        ), patch(
+            "revlo.reviewer.engine._review_chunk_generic",
+        ) as mock_chunk_generic:
+            report = await review_schematic(schematic)
+
+        assert seen_batch_sizes == [2, 2, 1]
+        assert len(report.findings) == 3
+        mock_chunk_generic.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_batch_falls_back_only_for_that_batch(self, monkeypatch):
+        monkeypatch.setenv("REVLO_REVIEW_BATCH_SIZE", "2")
+        schematic = _make_schematic()
+        chunks = [_make_review_chunk(i) for i in range(1, 5)]
+        fallback_chunks: list[str] = []
+
+        async def _mock_batched_review(batch, system_prompt, provider, model):
+            if batch[0].label.startswith("U1"):
+                return [Finding(**_valid_finding_dict(component_ref="U1"))]
+            return []
+
+        async def _mock_chunk_generic(chunk, provider, model):
+            fallback_chunks.append(chunk.label)
+            return [
+                Finding(
+                    **_valid_finding_dict(
+                        component_ref=chunk.components[0].reference,
+                        title=f"Fallback for {chunk.label}",
+                    )
+                )
+            ]
+
+        with patch(
+            "revlo.reviewer.engine.chunk_schematic",
+            return_value=chunks,
+        ), patch(
+            "revlo.reviewer.engine._review_with_ee_agent",
+            side_effect=_mock_batched_review,
+        ), patch(
+            "revlo.reviewer.engine._review_chunk_generic",
+            side_effect=_mock_chunk_generic,
+        ):
+            report = await review_schematic(schematic)
+
+        assert fallback_chunks == [chunks[2].label, chunks[3].label]
+        assert len(report.findings) == 3

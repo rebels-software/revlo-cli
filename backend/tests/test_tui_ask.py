@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -364,7 +364,6 @@ class TestFindingContext:
             await pilot.press("a")
             await pilot.pause()
 
-            chat = app.query_one("#chat-panel", ChatPanel)
             # Check that context banner was added (scroll area should have children)
             from textual.containers import VerticalScroll
             scroll = app.query_one("#chat-scroll", VerticalScroll)
@@ -406,6 +405,52 @@ class TestChatStreaming:
             # User message should be in conversation
             assert any(m["role"] == "user" and "U1" in m["content"]
                       for m in app._conversation)
+
+
+class TestParsedSchematicReuse:
+    def test_uses_injected_parsed_schematic_without_reparse(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        parsed = object()
+        app = RevloApp(sample_report, schematic_path, parsed_schematic=parsed)
+
+        with patch("revlo.parser.parse_schematic") as mock_parse:
+            assert app._get_parsed_schematic() is parsed
+            assert app._get_parsed_schematic() is parsed
+
+        mock_parse.assert_not_called()
+
+    def test_failed_parse_is_cached(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+
+        with patch(
+            "revlo.parser.parse_schematic",
+            side_effect=RuntimeError("parse failed"),
+        ) as mock_parse:
+            assert app._get_parsed_schematic() is None
+            assert app._get_parsed_schematic() is None
+
+        mock_parse.assert_called_once_with(schematic_path)
+
+    @pytest.mark.asyncio
+    async def test_reentering_chat_mode_reuses_cached_parse(
+        self, sample_report: ReviewReport, schematic_path: str
+    ):
+        app = RevloApp(sample_report, schematic_path)
+        parsed = object()
+
+        with patch("revlo.parser.parse_schematic", return_value=parsed) as mock_parse:
+            async with app.run_test() as pilot:
+                await pilot.press("a")
+                await pilot.pause()
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+
+        mock_parse.assert_called_once_with(schematic_path)
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +514,7 @@ class TestFilterBarDisplay:
         self, sample_report: ReviewReport, schematic_path: str
     ):
         app = RevloApp(sample_report, schematic_path)
-        async with app.run_test() as pilot:
+        async with app.run_test():
             fbar = app.query_one("#filter-bar", FilterBar)
             right_label = fbar.query_one("#filter-right")
             text = right_label.render().plain
@@ -480,7 +525,7 @@ class TestFilterBarDisplay:
         self, sample_report: ReviewReport, schematic_path: str
     ):
         app = RevloApp(sample_report, schematic_path)
-        async with app.run_test() as pilot:
+        async with app.run_test():
             fbar = app.query_one("#filter-bar", FilterBar)
             center_label = fbar.query_one("#filter-center")
             text = center_label.render().plain

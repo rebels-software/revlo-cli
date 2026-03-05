@@ -422,6 +422,7 @@ class RevloApp(App[None]):
         self.schematic_path = schematic_path
         self._review_path = review_path  # Path to the .revlo review JSON
         self._parsed_schematic = parsed_schematic
+        self._parsed_schematic_resolved = parsed_schematic is not None
         self._sorted_findings = self._sort_findings(report.findings)
         self._chat_panel = None
         self._conversation: list[dict] = []  # API-format messages
@@ -449,15 +450,19 @@ class RevloApp(App[None]):
 
     def _get_parsed_schematic(self):
         """Get or lazily parse the schematic for tool use."""
-        if self._parsed_schematic is not None:
+        if self._parsed_schematic_resolved:
             return self._parsed_schematic
         try:
             from revlo.parser import parse_schematic
             self._parsed_schematic = parse_schematic(self.schematic_path)
-            return self._parsed_schematic
         except Exception:
+            self._parsed_schematic = None
             logger.warning("Could not parse schematic for tool use", exc_info=True)
-            return None
+        finally:
+            # Cache both success and failure so repeated Ask Mode actions do not
+            # keep reparsing the same schematic or replaying the same exception.
+            self._parsed_schematic_resolved = True
+        return self._parsed_schematic
 
     def compose(self) -> ComposeResult:
         sch_name = Path(self.schematic_path).name
@@ -653,6 +658,7 @@ class RevloApp(App[None]):
         from revlo.tui.chat import ChatPanel
 
         self._chat_mode = True
+        self._get_parsed_schematic()
 
         # Hide detail panel
         try:
