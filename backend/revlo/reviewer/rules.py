@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Protocol
@@ -16,6 +17,9 @@ from revlo.reviewer.models import (
     FindingSourceType,
     Severity,
 )
+from revlo.rule_packs import CustomRuleDefinition, CustomRulePack, RulePackMatchCondition
+
+logger = logging.getLogger(__name__)
 
 _RULES_ENV_VAR = "REVLO_ENABLE_RULES"
 
@@ -501,6 +505,156 @@ class BOMSourcingRule:
         return findings
 
 
+def _evaluate_condition(
+    condition: RulePackMatchCondition,
+    component: ParsedComponent,
+    connected_nets: list[str],
+) -> bool:
+    """Evaluate a single match condition against a component."""
+    field_val = condition.field
+    op = condition.operator
+    target = condition.value
+
+    if field_val == "ref_prefix":
+        subject = component.reference
+    elif field_val == "value_contains":
+        subject = component.value
+    elif field_val == "net_contains":
+        # Any connected net matching is sufficient.
+        return any(
+            _apply_operator(op, net_name, target)
+            for net_name in connected_nets
+        )
+    elif field_val == "lib_id_contains":
+        subject = component.lib_id
+    else:
+        return False
+
+    return _apply_operator(op, subject, target)
+
+
+def _apply_operator(op: str, subject: str, target: str) -> bool:
+    """Apply a string operator (case-insensitive)."""
+    s = subject.lower()
+    t = target.lower()
+    if op == "equals":
+        return s == t
+    if op == "contains":
+        return t in s
+    if op == "not_contains":
+        return t not in s
+    if op == "starts_with":
+        return s.startswith(t)
+    return False
+
+
+def _connected_nets_for_component(component: ParsedComponent) -> list[str]:
+    """Return the list of net names connected to a component's pins."""
+    return [
+        pin.connected_net
+        for pin in component.pins
+        if pin.connected_net
+    ]
+
+
+def _severity_from_string(raw: str) -> Severity:
+    """Convert a raw severity string to the enum, defaulting to warning."""
+    try:
+        return Severity(raw.lower())
+    except ValueError:
+        return Severity.warning
+
+
+def _category_from_string(raw: str) -> FindingCategory:
+    """Convert a raw category string to the enum, defaulting to connectivity."""
+    try:
+        return FindingCategory(raw.lower())
+    except ValueError:
+        return FindingCategory.connectivity
+
+
+@dataclass(slots=True)
+class CustomRulePackEvaluator:
+    """Evaluates all rules in a single CustomRulePack against the schematic.
+
+    Implements the DeterministicRule protocol so it can slot into the engine.
+    """
+
+    pack: CustomRulePack
+    name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            self.name = f"custom_pack:{self.pack.name}"
+
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+        project_constraints: ProjectConstraints | None = None,
+    ) -> list[Finding]:
+        findings: list[Finding] = []
+        for rule_def in self.pack.rules:
+            findings.extend(self._evaluate_rule(rule_def, schematic))
+        return findings
+
+    def _evaluate_rule(
+        self,
+        rule_def: CustomRuleDefinition,
+        schematic: ParsedSchematic,
+    ) -> list[Finding]:
+        findings: list[Finding] = []
+        for component in schematic.components:
+            if self._matches(rule_def, component):
+                findings.append(self._build_finding(rule_def, component))
+        return findings
+
+    def _matches(
+        self,
+        rule_def: CustomRuleDefinition,
+        component: ParsedComponent,
+    ) -> bool:
+        """All conditions must match for the rule to fire (AND logic)."""
+        if not rule_def.conditions:
+            return False
+        nets = _connected_nets_for_component(component)
+        return all(
+            _evaluate_condition(cond, component, nets)
+            for cond in rule_def.conditions
+        )
+
+    def _build_finding(
+        self,
+        rule_def: CustomRuleDefinition,
+        component: ParsedComponent,
+    ) -> Finding:
+        notes = [
+            f"Rule pack: {self.pack.name}",
+            f"Rule ID: {rule_def.id}",
+        ]
+        if rule_def.notes:
+            notes.append(rule_def.notes)
+
+        return Finding(
+            severity=_severity_from_string(rule_def.severity),
+            category=_category_from_string(rule_def.category),
+            component_ref=component.reference,
+            title=rule_def.title,
+            description=(
+                f"Custom rule '{rule_def.id}' matched component {component.reference}."
+            ),
+            recommendation=rule_def.remediation,
+            confidence=1.0,
+            source_type=FindingSourceType.custom_rule,
+            evidence=FindingEvidence(
+                refs=[component.reference],
+                sheet_paths=[component.source_sheet] if component.source_sheet else [],
+                notes=notes,
+            ),
+        )
+
+
 @dataclass(slots=True)
 class DeterministicRuleEngine:
     """Small coordinator for deterministic review rules."""
@@ -537,26 +691,56 @@ def resolve_deterministic_checks_enabled(
     return raw not in {"0", "false", "no", "off"}
 
 
+_BUILTIN_RULES: tuple[DeterministicRule, ...] = (
+    PowerConnectivityRule(),
+    DecouplingPresenceRule(),
+    I2CBusPullupRule(),
+    LibraryHygieneRule(),
+    BOMCoverageRule(),
+    BOMSourcingRule(),
+)
+
+
+def _build_rules_with_custom_packs(
+    custom_rule_packs: list[CustomRulePack] | None,
+) -> tuple[DeterministicRule, ...]:
+    """Merge built-in rules with custom rule packs.
+
+    * additive=True packs append custom evaluators after built-ins.
+    * additive=False packs replace built-ins entirely.
+    """
+    if not custom_rule_packs:
+        return _BUILTIN_RULES
+
+    # Check if any pack requests override (additive=False).
+    has_override = any(not pack.additive for pack in custom_rule_packs)
+    custom_evaluators: tuple[DeterministicRule, ...] = tuple(
+        CustomRulePackEvaluator(pack=pack) for pack in custom_rule_packs
+    )
+
+    if has_override:
+        logger.info(
+            "Custom rule packs with additive=False detected; built-in rules replaced"
+        )
+        return custom_evaluators
+
+    return _BUILTIN_RULES + custom_evaluators
+
+
 def run_deterministic_checks(
     schematic: ParsedSchematic,
     enabled: bool | None = None,
     engine: DeterministicRuleEngine | None = None,
     bom: BomDocument | None = None,
     project_constraints: ProjectConstraints | None = None,
+    custom_rule_packs: list[CustomRulePack] | None = None,
 ) -> list[Finding]:
     """Run deterministic schematic checks without provider access."""
     if not resolve_deterministic_checks_enabled(enabled):
         return []
 
     resolved_engine = engine or DeterministicRuleEngine(
-        rules=(
-            PowerConnectivityRule(),
-            DecouplingPresenceRule(),
-            I2CBusPullupRule(),
-            LibraryHygieneRule(),
-            BOMCoverageRule(),
-            BOMSourcingRule(),
-        )
+        rules=_build_rules_with_custom_packs(custom_rule_packs),
     )
     return resolved_engine.evaluate(
         schematic,

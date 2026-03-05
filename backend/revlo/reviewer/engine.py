@@ -20,6 +20,7 @@ from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.reviewer.models import Finding, ReviewReport
 from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
 from revlo.reviewer.rules import run_deterministic_checks
+from revlo.rule_packs import CustomRulePack
 from revlo.skills import load_skill
 
 logger = logging.getLogger(__name__)
@@ -303,6 +304,7 @@ async def review_schematic(
     bom: BomDocument | None = None,
     enable_deterministic_checks: bool | None = None,
     project_constraints: ProjectConstraints | None = None,
+    custom_rule_packs: list[CustomRulePack] | None = None,
 ) -> ReviewReport:
     """Review a parsed schematic by sending all chunks to the EE review agent.
 
@@ -337,6 +339,7 @@ async def review_schematic(
         enabled=enable_deterministic_checks,
         bom=bom,
         project_constraints=project_constraints,
+        custom_rule_packs=custom_rule_packs,
     )
 
     # Inject datasheet specs into chunks when available.
