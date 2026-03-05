@@ -4,8 +4,11 @@ import pytest
 from pydantic import ValidationError
 
 from revlo.reviewer.models import (
+    DatasheetEvidence,
     Finding,
     FindingCategory,
+    FindingEvidence,
+    FindingSourceType,
     ReviewReport,
     Severity,
     SeverityStats,
@@ -65,6 +68,33 @@ class TestFinding:
         data = self._make(severity=Severity.warning, category=FindingCategory.pull_up).model_dump()
         assert data["severity"] == "warning"
         assert data["category"] == "pull_up"
+
+    def test_source_and_evidence_defaults(self):
+        f = self._make()
+        assert f.source_type == FindingSourceType.llm
+        assert f.evidence.refs == []
+        assert f.evidence.datasheets == []
+
+    def test_source_and_evidence_roundtrip(self):
+        f = self._make(
+            source_type=FindingSourceType.deterministic,
+            evidence=FindingEvidence(
+                refs=["U1", "C1"],
+                nets=["3V3"],
+                sheet_paths=["/Power"],
+                datasheets=[
+                    DatasheetEvidence(
+                        mpn="STM32F103C8T6",
+                        relevant_pages=[47, 52],
+                    )
+                ],
+                notes=["Observed on MCU supply pins"],
+            ),
+        )
+        data = f.model_dump()
+        assert data["source_type"] == "deterministic"
+        assert data["evidence"]["refs"] == ["U1", "C1"]
+        assert data["evidence"]["datasheets"][0]["relevant_pages"] == [47, 52]
 
 
 class TestSeverityStats:

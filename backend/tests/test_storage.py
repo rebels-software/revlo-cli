@@ -8,8 +8,11 @@ from pathlib import Path
 import pytest
 
 from revlo.reviewer.models import (
+    DatasheetEvidence,
     Finding,
     FindingCategory,
+    FindingEvidence,
+    FindingSourceType,
     ReviewReport,
     Severity,
 )
@@ -37,6 +40,18 @@ def sample_report() -> ReviewReport:
                 description="No decoupling capacitor found near U1.",
                 recommendation="Add a 100nF capacitor close to the power pins.",
                 confidence=0.95,
+                source_type=FindingSourceType.deterministic,
+                evidence=FindingEvidence(
+                    refs=["U1", "C1"],
+                    nets=["3V3", "GND"],
+                    sheet_paths=["/Power"],
+                    datasheets=[
+                        DatasheetEvidence(
+                            mpn="STM32F103C8T6",
+                            relevant_pages=[47],
+                        )
+                    ],
+                ),
             )
         ],
         summary="Found 1 issues (1 errors, 0 warnings, 0 suggestions)",
@@ -97,6 +112,23 @@ def test_save_review_contains_valid_report_and_meta(
     report = ReviewReport.model_validate(data)
     assert len(report.findings) == 1
     assert report.findings[0].title == "Missing decoupling capacitor"
+    assert report.findings[0].source_type == FindingSourceType.deterministic
+    assert report.findings[0].evidence.refs == ["U1", "C1"]
+
+
+def test_load_latest_review_preserves_finding_evidence(
+    sample_report: ReviewReport, fake_schematic: Path
+) -> None:
+    """Saved review files round-trip finding source and evidence metadata."""
+    save_review(sample_report, str(fake_schematic))
+    result = load_latest_review(str(fake_schematic))
+    assert result is not None
+
+    report, _, _ = result
+    finding = report.findings[0]
+    assert finding.source_type == FindingSourceType.deterministic
+    assert finding.evidence.nets == ["3V3", "GND"]
+    assert finding.evidence.datasheets[0].mpn == "STM32F103C8T6"
 
 
 def test_save_review_persists_review_metadata_fields(

@@ -4,8 +4,11 @@ from revlo.reviewer.chunker import ReviewChunk, chunk_schematic
 from revlo.config import DEFAULT_MODEL, MODEL_OPUS, MODEL_SONNET
 from revlo.reviewer.engine import review_schematic
 from revlo.reviewer.models import (
+    DatasheetEvidence,
     Finding,
     FindingCategory,
+    FindingEvidence,
+    FindingSourceType,
     ReviewReport,
     Severity,
     SeverityStats,
@@ -14,8 +17,11 @@ from revlo.reviewer.prompts import build_review_prompt, format_chunk_data
 
 __all__ = [
     "DEFAULT_MODEL",
+    "DatasheetEvidence",
     "Finding",
     "FindingCategory",
+    "FindingEvidence",
+    "FindingSourceType",
     "MODEL_OPUS",
     "MODEL_SONNET",
     "ReviewChunk",

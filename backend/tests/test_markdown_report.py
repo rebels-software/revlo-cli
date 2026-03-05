@@ -2,8 +2,11 @@
 
 from revlo.report import generate_markdown_report
 from revlo.reviewer.models import (
+    DatasheetEvidence,
     Finding,
     FindingCategory,
+    FindingEvidence,
+    FindingSourceType,
     ReviewReport,
     Severity,
 )
@@ -109,9 +112,35 @@ class TestGenerateMarkdownReport:
         assert "### Missing decoupling capacitor" in markdown
         assert "**Component:** `U5`" in markdown
         assert "**Category:** decoupling" in markdown
+        assert "**Source:** llm" in markdown
         assert "**Confidence:** 95%" in markdown
         assert "This IC requires a decoupling capacitor near VDD pin." in markdown
         assert "> **Recommendation:** Add a 100nF capacitor between VDD and GND, close to the IC." in markdown
+
+    def test_finding_evidence_renders_when_present(self):
+        finding = self._make_finding(
+            source_type=FindingSourceType.deterministic,
+            evidence=FindingEvidence(
+                refs=["U1", "C3"],
+                nets=["NRST"],
+                sheet_paths=["/MCU"],
+                datasheets=[
+                    DatasheetEvidence(mpn="STM32F103", relevant_pages=[47, 48])
+                ],
+                notes=["Reset capacitor missing"],
+            ),
+        )
+        report = ReviewReport(findings=[finding])
+
+        markdown = generate_markdown_report(report)
+
+        assert "**Source:** deterministic" in markdown
+        assert "**Evidence**" in markdown
+        assert "- Refs: U1, C3" in markdown
+        assert "- Nets: NRST" in markdown
+        assert "- Sheets: /MCU" in markdown
+        assert "STM32F103 (pages 47, 48)" in markdown
+        assert "- Notes: Reset capacitor missing" in markdown
 
     def test_schematic_title_and_review_date_appear_in_output(self):
         """Schematic title and review date should appear at the top of the report."""

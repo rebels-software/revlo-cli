@@ -30,6 +30,27 @@ class FindingCategory(StrEnum):
     thermal = "thermal"
 
 
+class FindingSourceType(StrEnum):
+    llm = "llm"
+    deterministic = "deterministic"
+    custom_rule = "custom_rule"
+
+
+class DatasheetEvidence(BaseModel):
+    mpn: str = ""
+    manufacturer: str = ""
+    pdf_path: str = ""
+    relevant_pages: list[int] = Field(default_factory=list)
+
+
+class FindingEvidence(BaseModel):
+    refs: list[str] = Field(default_factory=list)
+    nets: list[str] = Field(default_factory=list)
+    sheet_paths: list[str] = Field(default_factory=list)
+    datasheets: list[DatasheetEvidence] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
 class Finding(BaseModel):
     severity: Severity
     category: FindingCategory
@@ -39,6 +60,8 @@ class Finding(BaseModel):
     recommendation: str
     confidence: float = Field(ge=0.0, le=1.0)
     suggested_fix: str = ""
+    source_type: FindingSourceType = FindingSourceType.llm
+    evidence: FindingEvidence = Field(default_factory=FindingEvidence)
 
 
 class SeverityStats(BaseModel):

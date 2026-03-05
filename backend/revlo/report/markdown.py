@@ -25,12 +25,35 @@ def _format_finding(finding: Finding) -> str:
         "",
         f"**Component:** `{finding.component_ref}`  ",
         f"**Category:** {finding.category.value}  ",
+        f"**Source:** {finding.source_type.value}  ",
         f"**Confidence:** {finding.confidence:.0%}",
         "",
         finding.description,
         "",
         f"> **Recommendation:** {finding.recommendation}",
     ]
+    if finding.evidence.refs or finding.evidence.nets or finding.evidence.sheet_paths:
+        lines.extend([
+            "",
+            "**Evidence**",
+        ])
+        if finding.evidence.refs:
+            lines.append(f"- Refs: {', '.join(finding.evidence.refs)}")
+        if finding.evidence.nets:
+            lines.append(f"- Nets: {', '.join(finding.evidence.nets)}")
+        if finding.evidence.sheet_paths:
+            lines.append(f"- Sheets: {', '.join(finding.evidence.sheet_paths)}")
+    if finding.evidence.datasheets:
+        lines.append("- Datasheets:")
+        for evidence in finding.evidence.datasheets:
+            label = evidence.mpn or evidence.manufacturer or "datasheet"
+            pages = ""
+            if evidence.relevant_pages:
+                page_list = ", ".join(str(page) for page in evidence.relevant_pages)
+                pages = f" (pages {page_list})"
+            lines.append(f"  - {label}{pages}")
+    if finding.evidence.notes:
+        lines.append(f"- Notes: {'; '.join(finding.evidence.notes)}")
     return "\n".join(lines)
 
 
