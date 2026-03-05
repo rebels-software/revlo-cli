@@ -12,7 +12,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from revlo.cli import _build_parser, _run_check, _run_history, _run_open, _run_review, main
+from revlo.cli import (
+    _build_parser,
+    _check_failure_message,
+    _check_scope_findings,
+    _run_check,
+    _run_history,
+    _run_open,
+    _run_review,
+    main,
+)
+from revlo.review_state import ReviewBaseline, snapshot_finding
 from revlo.parser.models import (
     ParsedComponent,
     ParsedSchematic,
@@ -118,6 +128,9 @@ def test_build_parser_creates_check_subcommand():
     assert args.json_output is False
     assert args.min_confidence == 0.5
     assert args.profile is None
+    assert args.fail_on == "error"
+    assert args.fail_categories == []
+    assert args.scope == "all"
 
 
 def test_build_parser_with_profile_flag():
@@ -200,6 +213,25 @@ def test_run_check_forces_non_interactive_review(fixture_path: str):
 
     assert args.no_tui is True
     mock_run_review.assert_called_once_with(args)
+
+
+def test_run_check_parser_threshold_flags():
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "check",
+            "test.kicad_sch",
+            "--fail-on",
+            "warning",
+            "--fail-category",
+            "unused_pin",
+            "--scope",
+            "new",
+        ]
+    )
+    assert args.fail_on == "warning"
+    assert args.fail_categories == ["unused_pin"]
+    assert args.scope == "new"
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +761,83 @@ def test_run_review_invalid_profile_exits(fixture_path: str):
         with pytest.raises(SystemExit) as exc:
             _run_review(args)
         assert exc.value.code == 1
+
+
+def test_check_scope_findings_uses_all_by_default(mock_review_report: ReviewReport):
+    findings, message = _check_scope_findings(
+        mock_review_report,
+        "board.kicad_sch",
+        "all",
+    )
+    assert findings == mock_review_report.findings
+    assert "Evaluating all" in message
+
+
+def test_check_scope_findings_uses_baseline_for_new_scope(
+    mock_review_report: ReviewReport,
+):
+    baseline = ReviewBaseline(
+        schematic="board.kicad_sch",
+        created_at="2026-03-05T12:00:00+00:00",
+        revlo_version="0.1.0",
+        findings=[snapshot_finding(mock_review_report.findings[0])],
+    )
+
+    with patch("revlo.cli.load_baseline", return_value=baseline):
+        findings, message = _check_scope_findings(
+            mock_review_report,
+            "board.kicad_sch",
+            "new",
+        )
+
+    assert findings == []
+    assert "saved baseline" in message
+
+
+def test_check_failure_message_matches_severity(mock_review_report: ReviewReport):
+    message = _check_failure_message(
+        mock_review_report.findings,
+        fail_on="error",
+        fail_categories=[],
+        scope_message="Evaluating all findings.",
+    )
+    assert message is not None
+    assert "severity threshold 'error'" in message
+
+
+def test_check_failure_message_matches_category(sample_report=None):
+    findings = [
+        Finding(
+            severity=Severity.suggestion,
+            category=FindingCategory.unused_pin,
+            component_ref="U2",
+            title="Unused pin",
+            description="Pin 5 is floating.",
+            recommendation="Tie it or mark NC.",
+            confidence=0.7,
+        )
+    ]
+    message = _check_failure_message(
+        findings,
+        fail_on="none",
+        fail_categories=["unused_pin"],
+        scope_message="Evaluating all findings.",
+    )
+    assert message is not None
+    assert "category threshold matched" in message
+
+
+def test_run_check_exits_when_policy_is_triggered(
+    fixture_path: str,
+    mock_review_report: ReviewReport,
+):
+    args = _build_parser().parse_args(["check", fixture_path, "--skip-datasheet"])
+
+    with patch("revlo.cli._run_review", return_value=mock_review_report):
+        with pytest.raises(SystemExit) as exc:
+            _run_check(args)
+
+    assert exc.value.code == 2
 
 
 # ---------------------------------------------------------------------------

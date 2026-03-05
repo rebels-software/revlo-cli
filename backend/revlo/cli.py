@@ -24,7 +24,9 @@ from revlo.config import (
 )
 from revlo.parser import parse_schematic
 from revlo.report import generate_markdown_report
+from revlo.review_state import finding_fingerprint, load_baseline
 from revlo.reviewer import review_schematic
+from revlo.reviewer.models import Finding, FindingCategory, ReviewReport, Severity
 from revlo.ui import (
     AMBER,
     GRADIENT_LOOP,
@@ -39,6 +41,11 @@ from revlo.ui import (
 )
 
 logger = logging.getLogger(__name__)
+_SEVERITY_RANK = {
+    Severity.suggestion.value: 0,
+    Severity.warning.value: 1,
+    Severity.error.value: 2,
+}
 
 
 def _add_review_args(parser: argparse.ArgumentParser) -> None:
@@ -138,6 +145,26 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_review_args(check)
+    check.add_argument(
+        "--fail-on",
+        choices=["none", "error", "warning", "suggestion"],
+        default="error",
+        help="Fail when findings at or above this severity are present (default: error)",
+    )
+    check.add_argument(
+        "--fail-category",
+        action="append",
+        default=[],
+        choices=[category.value for category in FindingCategory],
+        dest="fail_categories",
+        help="Fail when findings from this category are present. Can be repeated.",
+    )
+    check.add_argument(
+        "--scope",
+        choices=["all", "new"],
+        default="all",
+        help="Apply thresholds to all findings or only findings not present in the saved baseline",
+    )
     # -- open subcommand: view last stored review --
     open_cmd = subparsers.add_parser(
         "open",
@@ -186,7 +213,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_review(args: argparse.Namespace) -> None:
+def _run_review(args: argparse.Namespace) -> ReviewReport:
     """Execute the review subcommand."""
     path: str = args.path
 
@@ -434,12 +461,12 @@ def _run_review(args: argparse.Namespace) -> None:
                 sys.exit(1)
         else:
             print(output)
-        return
+        return report
 
     # -- no-tui mode: show finding cards then exit --
     if args.no_tui:
         print_finding_cards(console, report)
-        return
+        return report
 
     # -- default: launch interactive TUI --
     import time
@@ -460,12 +487,101 @@ def _run_review(args: argparse.Namespace) -> None:
         provider=provider,
     )
     app.run()
+    return report
+
+
+def _check_scope_findings(
+    report: ReviewReport,
+    schematic_path: str,
+    scope: str,
+) -> tuple[list[Finding], str]:
+    """Select the findings relevant to check-threshold evaluation."""
+    if scope != "new":
+        return report.findings, f"Evaluating all {len(report.findings)} findings."
+
+    baseline = load_baseline(schematic_path)
+    if baseline is None:
+        return (
+            report.findings,
+            "No baseline found; evaluating all findings.",
+        )
+
+    baseline_fingerprints = {finding.fingerprint for finding in baseline.findings}
+    new_findings = [
+        finding
+        for finding in report.findings
+        if finding_fingerprint(finding) not in baseline_fingerprints
+    ]
+    return (
+        new_findings,
+        f"Evaluating {len(new_findings)} new findings against the saved baseline.",
+    )
+
+
+def _check_failure_message(
+    findings: list[Finding],
+    *,
+    fail_on: str,
+    fail_categories: list[str],
+    scope_message: str,
+) -> str | None:
+    """Return a failure message if the configured check policy is violated."""
+    matched_findings: list[Finding] = []
+    reasons: list[str] = []
+
+    if fail_on != "none":
+        threshold_rank = _SEVERITY_RANK[fail_on]
+        severity_matches = [
+            finding
+            for finding in findings
+            if _SEVERITY_RANK[finding.severity.value] >= threshold_rank
+        ]
+        if severity_matches:
+            matched_findings.extend(severity_matches)
+            reasons.append(
+                f"severity threshold '{fail_on}' matched {len(severity_matches)} finding(s)"
+            )
+
+    category_set = {category.strip() for category in fail_categories if category.strip()}
+    if category_set:
+        category_matches = [
+            finding for finding in findings if finding.category.value in category_set
+        ]
+        if category_matches:
+            matched_findings.extend(category_matches)
+            reasons.append(
+                "category threshold matched "
+                f"{len(category_matches)} finding(s): {', '.join(sorted(category_set))}"
+            )
+
+    if not reasons:
+        return None
+
+    unique_matches = {
+        (finding.component_ref, finding.title, finding.category.value)
+        for finding in matched_findings
+    }
+    return (
+        f"Check failed: {scope_message} "
+        f"{'; '.join(reasons)}. "
+        f"{len(unique_matches)} finding(s) triggered the policy."
+    )
 
 
 def _run_check(args: argparse.Namespace) -> None:
     """Execute the non-interactive check subcommand."""
     args.no_tui = True
-    _run_review(args)
+    report = _run_review(args)
+    findings, scope_message = _check_scope_findings(report, args.path, args.scope)
+    failure_message = _check_failure_message(
+        findings,
+        fail_on=args.fail_on,
+        fail_categories=args.fail_categories,
+        scope_message=scope_message,
+    )
+    if failure_message:
+        print(failure_message, file=sys.stderr)
+        sys.exit(2)
 
 
 def _run_history(args: argparse.Namespace) -> None:
