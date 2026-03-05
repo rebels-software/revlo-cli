@@ -404,6 +404,7 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
                         datasheet_specs=datasheet_specs,
                         min_confidence=args.min_confidence,
                         review_profile=review_profile,
+                        bom=bom,
                         project_constraints=project_constraints,
                     )
                 )
@@ -416,6 +417,7 @@ def _run_review(args: argparse.Namespace) -> ReviewReport:
                     datasheet_specs=datasheet_specs,
                     min_confidence=args.min_confidence,
                     review_profile=review_profile,
+                    bom=bom,
                     project_constraints=project_constraints,
                 )
             )

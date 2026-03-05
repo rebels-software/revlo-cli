@@ -29,6 +29,7 @@ class FindingCategory(StrEnum):
     connectivity = "connectivity"
     thermal = "thermal"
     library_hygiene = "library_hygiene"
+    bom = "bom"
 
 
 class FindingSourceType(StrEnum):

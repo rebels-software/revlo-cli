@@ -290,7 +290,7 @@ class TestReviewSchematic:
         ):
             report = await review_schematic(schematic)
 
-        mock_rules.assert_called_once_with(schematic, enabled=None)
+        mock_rules.assert_called_once_with(schematic, enabled=None, bom=None)
         assert [f.title for f in report.findings] == [
             "Scaffold deterministic issue",
             "Missing decoupling capacitor",
@@ -314,7 +314,7 @@ class TestReviewSchematic:
                 enable_deterministic_checks=False,
             )
 
-        mock_rules.assert_called_once_with(schematic, enabled=False)
+        mock_rules.assert_called_once_with(schematic, enabled=False, bom=None)
         assert [f.title for f in report.findings] == ["Missing decoupling capacitor"]
 
     @pytest.mark.asyncio

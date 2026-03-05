@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from revlo.bom import BomDocument, BomItem
 from revlo.parser.models import (
     ParsedComponent,
     ParsedNet,
@@ -14,6 +15,8 @@ from revlo.parser.models import (
 )
 from revlo.reviewer.models import Finding
 from revlo.reviewer.rules import (
+    BOMCoverageRule,
+    BOMSourcingRule,
     DecouplingPresenceRule,
     DeterministicRuleEngine,
     I2CBusPullupRule,
@@ -28,7 +31,7 @@ from revlo.reviewer.rules import (
 class _StubRule:
     name: str = "stub"
 
-    def evaluate(self, schematic: ParsedSchematic) -> list[Finding]:
+    def evaluate(self, schematic: ParsedSchematic, *, bom: BomDocument | None = None) -> list[Finding]:
         assert schematic.title_block.title == "Rule Test"
         return []
 
@@ -159,3 +162,34 @@ def test_library_hygiene_rule_reports_duplicate_refs_and_missing_fields():
     assert "Duplicate reference designator" in titles
     assert "Missing component value" in titles
     assert "Missing footprint" in titles
+
+
+def test_bom_coverage_rule_reports_active_component_missing_from_bom():
+    schematic = ParsedSchematic(
+        components=[ParsedComponent(reference="U1", value="MCU", lib_id="MCU:TEST", footprint="LQFP-48")],
+        title_block=TitleBlockInfo(title="Rule Test"),
+    )
+    bom = BomDocument(source_path="board.revlo-bom.csv", items=[])
+
+    findings = BOMCoverageRule().evaluate(schematic, bom=bom)
+
+    assert len(findings) == 1
+    assert findings[0].category.value == "bom"
+    assert findings[0].title == "Component missing from BOM"
+
+
+def test_bom_sourcing_rule_reports_missing_mpn_and_footprint_mismatch():
+    schematic = ParsedSchematic(
+        components=[ParsedComponent(reference="U1", value="MCU", lib_id="MCU:TEST", footprint="LQFP-48")],
+        title_block=TitleBlockInfo(title="Rule Test"),
+    )
+    bom = BomDocument(
+        source_path="board.revlo-bom.csv",
+        items=[BomItem(refs=["U1"], footprint="QFN-48")],
+    )
+
+    findings = BOMSourcingRule().evaluate(schematic, bom=bom)
+
+    titles = {finding.title for finding in findings}
+    assert "BOM item missing manufacturer part number" in titles
+    assert "BOM footprint mismatch" in titles

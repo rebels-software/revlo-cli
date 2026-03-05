@@ -10,6 +10,7 @@ import os
 import re
 
 from revlo.datasheet.models import DatasheetSpec
+from revlo.bom import BomDocument
 from revlo.config import DEFAULT_PROVIDER, DEFAULT_REVIEW_PROFILE, resolve_review_model
 from revlo.constraints import ProjectConstraints
 from revlo.llm import generate_text
@@ -299,6 +300,7 @@ async def review_schematic(
     datasheet_specs: dict[str, DatasheetSpec] | None = None,
     min_confidence: float = 0.5,
     review_profile: str = DEFAULT_REVIEW_PROFILE,
+    bom: BomDocument | None = None,
     enable_deterministic_checks: bool | None = None,
     project_constraints: ProjectConstraints | None = None,
 ) -> ReviewReport:
@@ -333,6 +335,7 @@ async def review_schematic(
     deterministic_findings = run_deterministic_checks(
         schematic,
         enabled=enable_deterministic_checks,
+        bom=bom,
     )
 
     # Inject datasheet specs into chunks when available.

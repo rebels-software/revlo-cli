@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Protocol
 
+from revlo.bom import BomDocument
 from revlo.parser.models import ParsedComponent, ParsedNet, ParsedPin, ParsedSchematic
 from revlo.reviewer.models import (
     Finding,
@@ -23,7 +24,12 @@ class DeterministicRule(Protocol):
 
     name: str
 
-    def evaluate(self, schematic: ParsedSchematic) -> list[Finding]:
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+    ) -> list[Finding]:
         """Evaluate the rule against a parsed schematic."""
 
 
@@ -115,7 +121,12 @@ def _has_i2c_pullup(net: ParsedNet, schematic: ParsedSchematic) -> bool:
 class PowerConnectivityRule:
     name: str = "power_connectivity"
 
-    def evaluate(self, schematic: ParsedSchematic) -> list[Finding]:
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+    ) -> list[Finding]:
         findings: list[Finding] = []
         unconnected = _build_unconnected_set(schematic)
         for component in schematic.components:
@@ -151,7 +162,12 @@ class PowerConnectivityRule:
 class DecouplingPresenceRule:
     name: str = "decoupling_presence"
 
-    def evaluate(self, schematic: ParsedSchematic) -> list[Finding]:
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+    ) -> list[Finding]:
         findings: list[Finding] = []
         net_lookup = _build_net_lookup(schematic)
         for component in schematic.components:
@@ -190,7 +206,12 @@ class DecouplingPresenceRule:
 class I2CBusPullupRule:
     name: str = "i2c_pullups"
 
-    def evaluate(self, schematic: ParsedSchematic) -> list[Finding]:
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+    ) -> list[Finding]:
         findings: list[Finding] = []
         for net in schematic.nets:
             name = net.name.upper()
@@ -229,7 +250,12 @@ class I2CBusPullupRule:
 class LibraryHygieneRule:
     name: str = "library_hygiene"
 
-    def evaluate(self, schematic: ParsedSchematic) -> list[Finding]:
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+    ) -> list[Finding]:
         findings: list[Finding] = []
         ref_counts: dict[str, int] = {}
         for component in schematic.components:
@@ -293,15 +319,142 @@ class LibraryHygieneRule:
 
 
 @dataclass(slots=True)
+class BOMCoverageRule:
+    name: str = "bom_coverage"
+
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+    ) -> list[Finding]:
+        if bom is None:
+            return []
+
+        findings: list[Finding] = []
+        bom_refs = {
+            ref.upper()
+            for item in bom.items
+            for ref in item.refs
+        }
+        for component in schematic.components:
+            if not _is_active_component(component):
+                continue
+            if component.reference.upper() in bom_refs:
+                continue
+            findings.append(
+                Finding(
+                    severity=Severity.warning,
+                    category=FindingCategory.bom,
+                    component_ref=component.reference,
+                    title="Component missing from BOM",
+                    description=(
+                        f"Active schematic component {component.reference} is not present in the loaded BOM."
+                    ),
+                    recommendation="Add the component to the BOM or explicitly exclude it from assembly output.",
+                    confidence=0.97,
+                    source_type=FindingSourceType.deterministic,
+                    evidence=FindingEvidence(
+                        refs=[component.reference],
+                        sheet_paths=[component.source_sheet] if component.source_sheet else [],
+                        notes=[f"BOM source: {bom.source_path}"],
+                    ),
+                )
+            )
+        return findings
+
+
+@dataclass(slots=True)
+class BOMSourcingRule:
+    name: str = "bom_sourcing"
+
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+    ) -> list[Finding]:
+        if bom is None:
+            return []
+
+        findings: list[Finding] = []
+        component_lookup = {
+            component.reference.upper(): component
+            for component in schematic.components
+        }
+        for item in bom.items:
+            active_refs = [
+                ref
+                for ref in item.refs
+                if ref.upper() in component_lookup
+                and _is_active_component(component_lookup[ref.upper()])
+            ]
+            if not active_refs:
+                continue
+            evidence = FindingEvidence(
+                refs=active_refs,
+                notes=[f"BOM source: {bom.source_path}"],
+            )
+            if not item.mpn:
+                findings.append(
+                    Finding(
+                        severity=Severity.warning,
+                        category=FindingCategory.bom,
+                        component_ref=active_refs[0],
+                        title="BOM item missing manufacturer part number",
+                        description=(
+                            f"BOM row for {', '.join(active_refs)} has no manufacturer part number."
+                        ),
+                        recommendation="Populate the MPN so sourcing and lifecycle checks can run reliably.",
+                        confidence=0.96,
+                        source_type=FindingSourceType.deterministic,
+                        evidence=evidence,
+                    )
+                )
+            if item.footprint:
+                mismatched = [
+                    ref for ref in active_refs
+                    if component_lookup[ref.upper()].footprint
+                    and component_lookup[ref.upper()].footprint != item.footprint
+                ]
+                if mismatched:
+                    findings.append(
+                        Finding(
+                            severity=Severity.warning,
+                            category=FindingCategory.bom,
+                            component_ref=mismatched[0],
+                            title="BOM footprint mismatch",
+                            description=(
+                                f"BOM footprint '{item.footprint}' does not match schematic footprint "
+                                f"for {', '.join(mismatched)}."
+                            ),
+                            recommendation="Align BOM package metadata with the schematic footprint before release.",
+                            confidence=0.9,
+                            source_type=FindingSourceType.deterministic,
+                            evidence=FindingEvidence(
+                                refs=mismatched,
+                                notes=[f"BOM source: {bom.source_path}"],
+                            ),
+                        )
+                    )
+        return findings
+
+
+@dataclass(slots=True)
 class DeterministicRuleEngine:
     """Small coordinator for deterministic review rules."""
 
     rules: tuple[DeterministicRule, ...] = ()
 
-    def evaluate(self, schematic: ParsedSchematic) -> list[Finding]:
+    def evaluate(
+        self,
+        schematic: ParsedSchematic,
+        *,
+        bom: BomDocument | None = None,
+    ) -> list[Finding]:
         findings: list[Finding] = []
         for rule in self.rules:
-            findings.extend(rule.evaluate(schematic))
+            findings.extend(rule.evaluate(schematic, bom=bom))
         return findings
 
 
@@ -320,6 +473,7 @@ def run_deterministic_checks(
     schematic: ParsedSchematic,
     enabled: bool | None = None,
     engine: DeterministicRuleEngine | None = None,
+    bom: BomDocument | None = None,
 ) -> list[Finding]:
     """Run deterministic schematic checks without provider access."""
     if not resolve_deterministic_checks_enabled(enabled):
@@ -331,6 +485,8 @@ def run_deterministic_checks(
             DecouplingPresenceRule(),
             I2CBusPullupRule(),
             LibraryHygieneRule(),
+            BOMCoverageRule(),
+            BOMSourcingRule(),
         )
     )
-    return resolved_engine.evaluate(schematic)
+    return resolved_engine.evaluate(schematic, bom=bom)
