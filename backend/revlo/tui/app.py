@@ -868,6 +868,11 @@ class RevloApp(App[None]):
         return build_ask_system_prompt(
             report=self.report,
             datasheet_specs=self.report.datasheet_specs,
+            investigation_target=(
+                self._investigation_target.to_banner_text()
+                if self._investigation_target is not None
+                else None
+            ),
         )
 
     def _stream_response(self) -> None:

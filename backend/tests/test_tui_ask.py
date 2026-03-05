@@ -171,6 +171,32 @@ class TestBuildAskSystemPrompt:
         prompt = build_ask_system_prompt(empty_report)
         assert "Current Review Findings" not in prompt
 
+    def test_generic_prompt_omits_investigation_mode(self, sample_report):
+        prompt = build_ask_system_prompt(sample_report)
+        assert "## General Ask Mode" in prompt
+        assert "## Investigation Mode" not in prompt
+
+    def test_investigation_mode_prompt_requires_tool_backed_validation(self, sample_report):
+        target = InvestigationTarget(
+            severity="warning",
+            title="Reset path issue",
+            component_ref="U2",
+            refs=["U2", "R5"],
+            nets=["NRST"],
+            recommendation="Add a pull-up.",
+        )
+
+        prompt = build_ask_system_prompt(
+            sample_report,
+            investigation_target=target.to_banner_text(),
+        )
+
+        assert "## Investigation Mode" in prompt
+        assert "Active investigation target" in prompt
+        assert target.to_banner_text() in prompt
+        assert "call at least one relevant tool" in prompt
+        assert "distinguish observed connectivity from inference" in prompt
+
 
 def test_new_investigation_tools_are_registered():
     names = {tool["name"] for tool in SCHEMATIC_TOOLS}

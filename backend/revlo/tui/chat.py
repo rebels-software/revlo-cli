@@ -90,6 +90,7 @@ def build_ask_system_prompt(
     report: ReviewReport,
     datasheet_specs: dict[str, DatasheetSpec] | None = None,
     schematic_summary: str = "",
+    investigation_target: str | None = None,
 ) -> str:
     """Build a system prompt for the ask-mode chat.
 
@@ -143,6 +144,27 @@ def build_ask_system_prompt(
         "When a user asks about a component or net, ALWAYS look it up first. "
         "Chain multiple tool calls to trace signal paths or verify connectivity."
     )
+
+    if investigation_target:
+        sections.append(
+            "## Investigation Mode\n\n"
+            f"Active investigation target: {investigation_target}\n\n"
+            "You are investigating an existing review finding, not answering in a "
+            "generic assistant mode.\n"
+            "Before making any concrete electrical claim, call at least one relevant "
+            "tool and ground the answer in the observed schematic data.\n"
+            "Use multi-step validation when needed: inspect the target component, "
+            "trace the relevant nets, and compare that evidence against datasheet or "
+            "constraint context before concluding.\n"
+            "Clearly distinguish observed connectivity from inference. If the data is "
+            "insufficient, say what is missing and what the user should inspect next."
+        )
+    else:
+        sections.append(
+            "## General Ask Mode\n\n"
+            "Handle general schematic questions, but still prefer tool-backed answers "
+            "whenever the user asks about a specific component, net, or electrical behavior."
+        )
 
     # 2c) Few-shot example interactions
     sections.append(
